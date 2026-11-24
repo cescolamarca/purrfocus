@@ -57,5 +57,5 @@ npm test
 ```
 
 ## Sprite Sheet Attribution
-
-Uses the 16x16 **Tiny Cat** pixel-art sprite sheets (`64x512` grid with `STANDING`, `WALKING`, `CROUCH & POUNCE`, and `SITTING` across 8 clockwise directions).
+https://pop-shop-packs.itch.io/
+Uses the 16x16 **Tiny Cat** pixel-art sprite sheets.
