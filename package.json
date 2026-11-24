@@ -1,0 +1,28 @@
+{
+  "name": "purrfocus",
+  "version": "0.1.0",
+  "description": "Retro Windows 98 desktop cat companion that keeps you studying via Win32 window hooks and Gemini vision.",
+  "main": "dist/main/index.js",
+  "license": "MIT",
+  "author": "Francesco Maria La Marca <cescolamarca@gmail.com>",
+  "scripts": {
+    "extract-assets": "node scripts/extract-sprites.mjs",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "node scripts/build-renderer.mjs",
+    "build": "npm run build:main && npm run build:renderer",
+    "typecheck": "tsc --noEmit",
+    "start": "npm run build && electron .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "98.css": "^0.1.20",
+    "koffi": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "electron": "^35.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

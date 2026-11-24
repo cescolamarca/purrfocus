@@ -1,0 +1,92 @@
+[
+  {
+    "id": "black-00",
+    "label": "Black #1",
+    "file": "tiny cat_spritesheet_black 00.png"
+  },
+  {
+    "id": "black-01",
+    "label": "Black #2",
+    "file": "tiny cat_spritesheet_black 01.png"
+  },
+  {
+    "id": "brown-00",
+    "label": "Brown #1",
+    "file": "tiny cat_spritesheet_brown 00.png"
+  },
+  {
+    "id": "brown-01",
+    "label": "Brown #2",
+    "file": "tiny cat_spritesheet_brown 01.png"
+  },
+  {
+    "id": "calico-00",
+    "label": "Calico #1",
+    "file": "tiny cat_spritesheet_calico 00.png"
+  },
+  {
+    "id": "cottoncandy",
+    "label": "Cottoncandy",
+    "file": "tiny cat_spritesheet_cottoncandy.png"
+  },
+  {
+    "id": "creme-00",
+    "label": "Creme #1",
+    "file": "tiny cat_spritesheet_creme 00.png"
+  },
+  {
+    "id": "ghost",
+    "label": "Ghost",
+    "file": "tiny cat_spritesheet_ghost.png"
+  },
+  {
+    "id": "grey-00",
+    "label": "Grey #1",
+    "file": "tiny cat_spritesheet_grey 00.png"
+  },
+  {
+    "id": "grey-01",
+    "label": "Grey #2",
+    "file": "tiny cat_spritesheet_grey 01.png"
+  },
+  {
+    "id": "greyscale",
+    "label": "Greyscale",
+    "file": "tiny cat_spritesheet_greyscale.png"
+  },
+  {
+    "id": "hairless-00",
+    "label": "Hairless #1",
+    "file": "tiny cat_spritesheet_hairless 00.png"
+  },
+  {
+    "id": "orange-00",
+    "label": "Orange #1",
+    "file": "tiny cat_spritesheet_orange 00.png"
+  },
+  {
+    "id": "orange-01",
+    "label": "Orange #2",
+    "file": "tiny cat_spritesheet_orange 01.png"
+  },
+  {
+    "id": "orange-02",
+    "label": "Orange #3",
+    "file": "tiny cat_spritesheet_orange 02.png"
+  },
+  {
+    "id": "retrogreen",
+    "label": "Retrogreen",
+    "file": "tiny cat_spritesheet_retrogreen.png"
+  },
+  {
+    "id": "tan-00",
+    "label": "Tan #1",
+    "file": "tiny cat_spritesheet_tan 00.png"
+  },
+  {
+    "id": "white-00",
+    "label": "White #1",
+    "file": "tiny cat_spritesheet_white 00.png"
+  }
+]
