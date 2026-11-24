@@ -186,6 +186,8 @@ interface NativeApi {
   ) => number;
   GetLastInputInfo: (plii: { cbSize: number; dwTime: number }) => number;
   GetTickCount: () => number;
+  CreateRectRgn: (x1: number, y1: number, x2: number, y2: number) => number;
+  SetWindowRgn: (hwnd: number, hrgn: number, bRedraw: number) => number;
 }
 
 let nativeApi: NativeApi | null = null;
@@ -255,7 +257,9 @@ function getNativeApi(): NativeApi {
       "int __stdcall GetDIBits(uintptr hdc, uintptr hbm, uint32 start, uint32 cLines, _Out_ uint8 *lpvBits, _Inout_ BITMAPINFOHEADER *lpbmi, uint32 usage)"
     ),
     GetLastInputInfo: user32.func("int __stdcall GetLastInputInfo(_Inout_ LASTINPUTINFO *plii)"),
-    GetTickCount: kernel32.func("uint32 __stdcall GetTickCount()")
+    GetTickCount: kernel32.func("uint32 __stdcall GetTickCount()"),
+    CreateRectRgn: gdi32.func("uintptr __stdcall CreateRectRgn(int x1, int y1, int x2, int y2)"),
+    SetWindowRgn: user32.func("int __stdcall SetWindowRgn(uintptr hWnd, uintptr hRgn, int bRedraw)")
   };
 
   return nativeApi;
@@ -794,5 +798,26 @@ export function captureScreenPhysicalBgra(
     if (hBitmap) api.DeleteObject(hBitmap);
     if (hdcMem) api.DeleteDC(hdcMem);
     api.ReleaseDC(0, hdcScreen);
+  }
+}
+
+export function setPhysicalWindowClipRect(
+  hwnd: number,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number
+): void {
+  if (process.platform !== "win32" || !hwnd) {
+    return;
+  }
+  const api = getNativeApi();
+  const hrgn = api.CreateRectRgn(left, top, right, bottom);
+  if (!hrgn) {
+    return;
+  }
+  const ok = api.SetWindowRgn(hwnd, hrgn, 1);
+  if (!ok) {
+    api.DeleteObject(hrgn);
   }
 }

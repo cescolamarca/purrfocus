@@ -33,6 +33,7 @@ import {
   getWindowClassName,
   hwndFromNativeBuffer,
   restoreAllSavedWindows,
+  setPhysicalWindowClipRect,
   setWindowNoActivate
 } from "./win32";
 
@@ -537,14 +538,34 @@ function setupTray(): void {
   rebuildMenu();
 }
 
+function getPhysicalViewportClip(): {
+  physLeft: number;
+  physTop: number;
+  physRight: number;
+  physBottom: number;
+  scale: number;
+} {
+  const primary = screen.getPrimaryDisplay();
+  const scale = primary.scaleFactor || 1;
+  const physLeft = Math.round(BLEED_X * scale);
+  const physTop = Math.round(BLEED_TOP * scale);
+  const physRight = Math.round((BLEED_X + primary.bounds.width) * scale);
+  const physBottom = Math.round((BLEED_TOP + primary.bounds.height) * scale);
+  return { physLeft, physTop, physRight, physBottom, scale };
+}
+
 function applyViewportClipShape(): void {
-  if (!mainWindow || mainWindow.isDestroyed()) {
+  if (!mainWindow || mainWindow.isDestroyed() || !overlayHwnd) {
     return;
   }
-  const bounds = screen.getPrimaryDisplay().bounds;
-  mainWindow.setShape([
-    { x: BLEED_X, y: BLEED_TOP, width: bounds.width, height: bounds.height }
-  ]);
+  const clip = getPhysicalViewportClip();
+  setPhysicalWindowClipRect(
+    overlayHwnd,
+    clip.physLeft,
+    clip.physTop,
+    clip.physRight,
+    clip.physBottom
+  );
 }
 
 function createOverlayWindow(): void {
@@ -607,8 +628,9 @@ function createOverlayWindow(): void {
     pushUiState();
     if (isSmokeTest) {
       const snap = getActiveWindowSnapshot(getOwnPids());
+      const clip = getPhysicalViewportClip();
       console.log(
-        `SMOKE_OK workArea=${JSON.stringify(getWorkAreaDip())} fg=${snap?.processName ?? "none"}`
+        `SMOKE_OK workArea=${JSON.stringify(getWorkAreaDip())} clip=${clip.physLeft},${clip.physTop}..${clip.physRight},${clip.physBottom} scale=${clip.scale} fg=${snap?.processName ?? "none"}`
       );
       setTimeout(() => {
         app.quit();
@@ -751,6 +773,9 @@ if (gotSingleInstanceLock) {
   app.whenReady().then(() => {
     registerIpcHandlers();
     createOverlayWindow();
+    screen.on("display-metrics-changed", () => {
+      applyViewportClipShape();
+    });
     if (!isSmokeTest) {
       setupTray();
       globalShortcut.register("CommandOrControl+Alt+Shift+Q", () => {

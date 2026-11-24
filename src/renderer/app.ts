@@ -467,6 +467,9 @@ window.addEventListener("mousedown", (e) => {
     hideContextMenu();
   }
   if (e.button !== 0) return;
+  if (!lastUiState || lastUiState.phase !== "ACTIVE") {
+    return;
+  }
   if (el && el.closest(".interactive-ui")) {
     return;
   }
@@ -670,8 +673,12 @@ function animationLoop(now: number): void {
   const dt = now - lastTickTime;
   lastTickTime = now;
 
-  physics.update(dt);
-  physics.render(ctx);
+  if (lastUiState && lastUiState.phase !== "LAUNCHER") {
+    physics.update(dt);
+    physics.render(ctx);
+  } else {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
 
   if (!warningBalloon.classList.contains("hidden")) {
     positionBubbleOverCat(warningBalloon, 265);
@@ -691,7 +698,11 @@ function animationLoop(now: number): void {
     previewTick += dt;
     const img = skinImages.get(selectedSkinId);
     if (img) {
-      const frame = getSpriteFrameRect("WALKING", 0, Math.floor(previewTick / 190));
+      const cycle = Math.floor(previewTick / 3200) % 2;
+      const frame =
+        cycle === 0
+          ? getSpriteFrameRect("SITTING", 0, Math.floor(previewTick / 260))
+          : getSpriteFrameRect("WALKING", 6, Math.floor(previewTick / 180));
       previewCtx.clearRect(0, 0, 96, 96);
       previewCtx.imageSmoothingEnabled = false;
       previewCtx.drawImage(img, frame.sx, frame.sy, 16, 16, 16, 16, 64, 64);

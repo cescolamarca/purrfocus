@@ -35,6 +35,25 @@ body {
   image-rendering: pixelated;
 }
 
+.window,
+.title-bar,
+button,
+input,
+label,
+legend,
+option,
+select,
+table,
+textarea {
+  font-family: Tahoma, "Segoe UI", sans-serif !important;
+  font-size: 12px !important;
+  -webkit-font-smoothing: antialiased !important;
+}
+
+.title-bar-text {
+  font-size: 12px !important;
+}
+
 .hidden {
   display: none !important;
 }
