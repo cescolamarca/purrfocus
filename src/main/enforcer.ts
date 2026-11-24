@@ -39,6 +39,7 @@ export interface EnforcerCallbacks {
   invalidateKey: (key: string) => void;
   onShameNote: (note: ShameNoteState) => void;
   onSpeechBubble: (text: string, durationMs: number) => void;
+  isTargetStillDistracting: (targetHwnd: number, originalKey: string) => boolean;
   onPhaseOrCommand: (info: {
     phase: EnforcerPhase;
     command: CatOverlayCommand;
@@ -48,12 +49,14 @@ export interface EnforcerCallbacks {
   }) => void;
 }
 
-const WARNING_COUNTDOWN_MS = 1800;
+const WARNING_COUNTDOWN_MS = 18_000;
 
 export class EnforcerEngine {
   private phase: EnforcerPhase = "IDLE";
   private activeTarget: ActiveTarget | null = null;
   private warningTimer: NodeJS.Timeout | null = null;
+  private warningCheckTimer: NodeJS.Timeout | null = null;
+  private cleanCheckCount = 0;
   private negotiationTimer: NodeJS.Timeout | null = null;
   private negotiationDeadline = 0;
   private negotiationPending = false;
@@ -104,9 +107,41 @@ export class EnforcerEngine {
     });
 
     this.clearTimers();
+    this.cleanCheckCount = 0;
+    this.warningCheckTimer = setInterval(() => {
+      if (this.disposed || this.phase !== "WARNING" || !this.activeTarget) {
+        return;
+      }
+      const stillDistracting = this.callbacks.isTargetStillDistracting(
+        this.activeTarget.win.hwnd,
+        this.activeTarget.key
+      );
+      if (!stillDistracting) {
+        this.cleanCheckCount += 1;
+        if (this.cleanCheckCount >= 2) {
+          this.callbacks.invalidateKey(this.activeTarget.key);
+          this.callbacks.onSpeechBubble(
+            "Bravo, hai chiuso da solo prima che usassi gli artigli!",
+            3200
+          );
+          this.returnToIdle();
+        }
+      } else {
+        this.cleanCheckCount = 0;
+      }
+    }, 500);
+
     this.warningTimer = setTimeout(() => {
       void this.executeStrike();
     }, WARNING_COUNTDOWN_MS);
+  }
+
+  strikeNow(): void {
+    if (this.disposed || this.phase !== "WARNING") {
+      return;
+    }
+    this.clearTimers();
+    void this.executeStrike();
   }
 
   async handleIdlePhoneNudge(idleSeconds: number): Promise<void> {
@@ -160,7 +195,7 @@ export class EnforcerEngine {
     this.clearTimers();
     this.phase = "NEGOTIATING";
     this.negotiationPending = false;
-    this.negotiationDeadline = Date.now() + 25_000;
+    this.negotiationDeadline = Date.now() + 35_000;
 
     const emitNegotiationTick = () => {
       if (this.disposed || this.phase !== "NEGOTIATING" || !this.activeTarget) {
@@ -313,9 +348,15 @@ export class EnforcerEngine {
     }
 
     this.clearTimers();
+    const target = this.activeTarget;
+    if (!this.callbacks.isTargetStillDistracting(target.win.hwnd, target.key)) {
+      this.callbacks.invalidateKey(target.key);
+      this.returnToIdle();
+      return;
+    }
+
     this.phase = "STRIKING";
     this.stats.rageCount += 1;
-    const target = this.activeTarget;
     const isBrowserTab =
       target.win.isBrowser && target.verdict.distractionTarget !== "DESKTOP_APP";
 
@@ -430,6 +471,10 @@ export class EnforcerEngine {
     if (this.warningTimer) {
       clearTimeout(this.warningTimer);
       this.warningTimer = null;
+    }
+    if (this.warningCheckTimer) {
+      clearInterval(this.warningCheckTimer);
+      this.warningCheckTimer = null;
     }
     if (this.negotiationTimer) {
       clearInterval(this.negotiationTimer);

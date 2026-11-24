@@ -347,7 +347,7 @@ export function evaluateLocally(goal: string, win: WindowSnapshot): AiVerdict {
         verdict: "DISTRACTED",
         confidence: 0.84,
         distractionTarget: "BROWSER_TAB",
-        roastMessageIt: `Che c'entra «${win.title.slice(0, 45)}» con «${goal}»?! Hai 1.8s per giustificarti o chiudo la scheda!`,
+        roastMessageIt: `Che c'entra «${win.title.slice(0, 45)}» con «${goal}»?! Hai 18s per giustificarti o chiudo la scheda!`,
         cacheSeconds: 12
       };
     }

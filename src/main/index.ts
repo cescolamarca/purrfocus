@@ -25,7 +25,8 @@ import type {
   WindowSnapshot
 } from "../shared/types";
 import { EnforcerEngine } from "./enforcer";
-import { HybridMonitor } from "./hybridMonitor";
+import { HybridMonitor, normalizeWindowKey } from "./hybridMonitor";
+import { evaluateLocally } from "./localFallbackJudge";
 import {
   configureBorderlessOverlayWindow,
   getActiveWindowSnapshot,
@@ -63,8 +64,16 @@ let lastShameNote: ShameNoteState | undefined;
 let lastSpeechBubble: CatSpeechBubble | undefined;
 
 const isSmokeTest = process.argv.includes("--smoke-test");
+const BLEED_X = 4;
+const BLEED_TOP = 48;
+const BLEED_BOTTOM = 8;
 
 app.commandLine.appendSwitch("disable-features", "WebRtcAllowWgcScreenCapturer");
+
+const gotSingleInstanceLock = isSmokeTest || app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
 
 function createEmptyStats(durationMinutes: number): SessionStats {
   return {
@@ -82,12 +91,16 @@ function createEmptyStats(durationMinutes: number): SessionStats {
 }
 
 function getWorkAreaDip(): Rect {
-  const wa = screen.getPrimaryDisplay().workArea;
+  const primary = screen.getPrimaryDisplay();
+  const origin = primary.bounds;
+  const wa = primary.workArea;
+  const left = wa.x - origin.x;
+  const top = wa.y - origin.y;
   return {
-    left: wa.x,
-    top: wa.y,
-    right: wa.x + wa.width,
-    bottom: wa.y + wa.height,
+    left,
+    top,
+    right: left + wa.width,
+    bottom: top + wa.height,
     width: wa.width,
     height: wa.height
   };
@@ -108,7 +121,9 @@ function getPhysicalScreenBounds(): Rect {
 }
 
 function toDipRect(phys: Rect): Rect {
-  const scale = screen.getPrimaryDisplay().scaleFactor || 1;
+  const primary = screen.getPrimaryDisplay();
+  const origin = primary.bounds;
+  const scale = primary.scaleFactor || 1;
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
       const converted = screen.screenToDipRect(mainWindow, {
@@ -117,11 +132,13 @@ function toDipRect(phys: Rect): Rect {
         width: phys.width,
         height: phys.height
       });
+      const left = converted.x - origin.x;
+      const top = converted.y - origin.y;
       return {
-        left: converted.x,
-        top: converted.y,
-        right: converted.x + converted.width,
-        bottom: converted.y + converted.height,
+        left,
+        top,
+        right: left + converted.width,
+        bottom: top + converted.height,
         width: converted.width,
         height: converted.height
       };
@@ -129,22 +146,32 @@ function toDipRect(phys: Rect): Rect {
       // Fall back to scale factor math if window bounds are unavailable
     }
   }
+  const left = Math.round(phys.left / scale) - origin.x;
+  const top = Math.round(phys.top / scale) - origin.y;
+  const width = Math.round(phys.width / scale);
+  const height = Math.round(phys.height / scale);
   return {
-    left: Math.round(phys.left / scale),
-    top: Math.round(phys.top / scale),
-    right: Math.round(phys.right / scale),
-    bottom: Math.round(phys.bottom / scale),
-    width: Math.round(phys.width / scale),
-    height: Math.round(phys.height / scale)
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height
   };
 }
 
 function toDipPoint(pt: { x: number; y: number }): { x: number; y: number } {
-  const scale = screen.getPrimaryDisplay().scaleFactor || 1;
+  const primary = screen.getPrimaryDisplay();
+  const origin = primary.bounds;
+  const scale = primary.scaleFactor || 1;
   try {
-    return screen.screenToDipPoint(pt);
+    const converted = screen.screenToDipPoint(pt);
+    return { x: converted.x - origin.x, y: converted.y - origin.y };
   } catch {
-    return { x: Math.round(pt.x / scale), y: Math.round(pt.y / scale) };
+    return {
+      x: Math.round(pt.x / scale) - origin.x,
+      y: Math.round(pt.y / scale) - origin.y
+    };
   }
 }
 
@@ -297,6 +324,20 @@ function startStudySession(config: SessionConfig): void {
       onSpeechBubble: (text, durationMs) => {
         lastSpeechBubble = { text, expiresAt: Date.now() + durationMs };
         pushUiState();
+      },
+      isTargetStillDistracting: (targetHwnd, originalKey) => {
+        const snap = getActiveWindowSnapshot(getOwnPids());
+        if (!snap) {
+          return true;
+        }
+        if (snap.hwnd !== targetHwnd) {
+          return evaluateLocally(config.goal, snap).verdict !== "STUDYING";
+        }
+        const currentKey = normalizeWindowKey(snap.processName, snap.title);
+        if (currentKey !== originalKey) {
+          return evaluateLocally(config.goal, snap).verdict !== "STUDYING";
+        }
+        return true;
       },
       onPhaseOrCommand: (info) => {
         lastOverlayCommand = info.command;
@@ -496,16 +537,25 @@ function setupTray(): void {
   rebuildMenu();
 }
 
+function applyViewportClipShape(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  const bounds = screen.getPrimaryDisplay().bounds;
+  mainWindow.setShape([
+    { x: BLEED_X, y: BLEED_TOP, width: bounds.width, height: bounds.height }
+  ]);
+}
+
 function createOverlayWindow(): void {
   const bounds = screen.getPrimaryDisplay().bounds;
   mainWindow = new BrowserWindow({
-    x: bounds.x,
-    y: bounds.y,
-    width: bounds.width,
-    height: Math.max(200, bounds.height - 1),
+    x: bounds.x - BLEED_X,
+    y: bounds.y - BLEED_TOP,
+    width: bounds.width + BLEED_X * 2,
+    height: bounds.height + BLEED_TOP + BLEED_BOTTOM,
     transparent: true,
     backgroundColor: "#00000000",
-    backgroundMaterial: "none",
     frame: false,
     thickFrame: false,
     roundedCorners: false,
@@ -527,14 +577,24 @@ function createOverlayWindow(): void {
   lastInteractive = null;
   lastFocusable = null;
   configureBorderlessOverlayWindow(overlayHwnd, true);
+  applyViewportClipShape();
   mainWindow.setAlwaysOnTop(true, "screen-saver");
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  mainWindow.on("blur", () => {
+    applyViewportClipShape();
+  });
+
+  mainWindow.on("focus", () => {
+    applyViewportClipShape();
+  });
 
   mainWindow.once("ready-to-show", () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       return;
     }
     configureBorderlessOverlayWindow(overlayHwnd, false);
+    applyViewportClipShape();
     mainWindow.show();
   });
 
@@ -543,6 +603,7 @@ function createOverlayWindow(): void {
 
   mainWindow.webContents.once("did-finish-load", () => {
     configureBorderlessOverlayWindow(overlayHwnd);
+    applyViewportClipShape();
     pushUiState();
     if (isSmokeTest) {
       const snap = getActiveWindowSnapshot(getOwnPids());
@@ -582,6 +643,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("enforcer:cancel-court", () => {
     enforcer?.cancelNegotiationAndStrike();
+  });
+
+  ipcMain.handle("enforcer:strike-now", () => {
+    enforcer?.strikeNow();
   });
 
   ipcMain.handle("session:surrender-phrase", () => {
@@ -682,18 +747,20 @@ function registerIpcHandlers(): void {
   });
 }
 
-app.whenReady().then(() => {
-  registerIpcHandlers();
-  createOverlayWindow();
-  if (!isSmokeTest) {
-    setupTray();
-    globalShortcut.register("CommandOrControl+Alt+Shift+Q", () => {
-      teardownSession();
-      restoreAllSavedWindows();
-      app.quit();
-    });
-  }
-});
+if (gotSingleInstanceLock) {
+  app.whenReady().then(() => {
+    registerIpcHandlers();
+    createOverlayWindow();
+    if (!isSmokeTest) {
+      setupTray();
+      globalShortcut.register("CommandOrControl+Alt+Shift+Q", () => {
+        teardownSession();
+        restoreAllSavedWindows();
+        app.quit();
+      });
+    }
+  });
+}
 
 app.on("will-quit", () => {
   teardownSession();

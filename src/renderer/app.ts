@@ -16,6 +16,7 @@ declare global {
       openExcuseCourt: () => Promise<void>;
       submitExcuse: (excuseText: string) => Promise<void>;
       cancelNegotiation: () => Promise<void>;
+      concedeAndCloseNow: () => Promise<void>;
       requestSurrenderPhrase: () => Promise<string>;
       cancelSurrenderModal: () => Promise<void>;
       attemptSurrender: (typedPhrase: string) => Promise<{ valid: boolean; reason?: string }>;
@@ -34,8 +35,12 @@ declare global {
 const audio = new RetroAudioSynth();
 const physics = new CatPhysicsEngine(() => audio.playPurr());
 
+const viewportRoot = document.getElementById("viewport-root")!;
 const canvas = document.getElementById("overlay-canvas") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
+
+const BLEED_X = 4;
+const BLEED_Y = 48;
 
 const launcherBackdrop = document.getElementById("launcher-backdrop")!;
 const previewCanvas = document.getElementById("preview-cat-canvas") as HTMLCanvasElement;
@@ -82,6 +87,7 @@ const warningBalloon = document.getElementById("warning-balloon")!;
 const balloonCountdownText = document.getElementById("balloon-countdown-text")!;
 const balloonMessage = document.getElementById("balloon-message")!;
 const balloonProgressFill = document.getElementById("balloon-progress-fill")!;
+const btnConcedeNow = document.getElementById("btn-concede-now")!;
 const btnJustifyNow = document.getElementById("btn-justify-now")!;
 
 const courtBackdrop = document.getElementById("court-backdrop")!;
@@ -120,9 +126,11 @@ const skinImages = new Map<string, HTMLImageElement>();
 let selectedSkinId = "calico-00";
 let lastUiState: RendererUiState | null = null;
 let warningStartedAt = 0;
-let warningTotalMs = 1800;
+let warningTotalMs = 18_000;
 let lastMode = "";
 let lastInteractiveFlag: boolean | null = null;
+let lastClientX = -1;
+let lastClientY = -1;
 let surrenderOpen = false;
 let completeOpen = false;
 let dismissedShameId = 0;
@@ -132,8 +140,8 @@ let previewTick = 0;
 let hudCollapsed = false;
 
 function resizeOverlayCanvas(): void {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  canvas.width = viewportRoot.clientWidth || window.innerWidth;
+  canvas.height = viewportRoot.clientHeight || window.innerHeight;
 }
 window.addEventListener("resize", resizeOverlayCanvas);
 resizeOverlayCanvas();
@@ -327,6 +335,10 @@ btnJustifyNow.addEventListener("click", async () => {
   await window.purrfocus.openExcuseCourt();
 });
 
+btnConcedeNow.addEventListener("click", async () => {
+  await window.purrfocus.concedeAndCloseNow();
+});
+
 btnCourtSubmit.addEventListener("click", async () => {
   const txt = courtExcuseInput.value.trim();
   if (!txt) return;
@@ -410,7 +422,8 @@ menuGiveTreat.addEventListener("click", () => {
     return;
   }
   const pos = physics.getPosition();
-  const offset = pos.x > window.innerWidth * 0.5 ? -180 : 180;
+  const viewW = viewportRoot.clientWidth || window.innerWidth;
+  const offset = pos.x > viewW * 0.5 ? -180 : 180;
   physics.chaseTreat(pos.x + offset, pos.y + 42);
   showCatSpeechBubble("Miao! Croccantino meritato!", 2600);
 });
@@ -428,9 +441,11 @@ function updateInteractiveHitTest(clientX: number, clientY: number): void {
     return;
   }
 
+  const vx = clientX - BLEED_X;
+  const vy = clientY - BLEED_Y;
   const el = document.elementFromPoint(clientX, clientY);
   const overUi = Boolean(el && el.closest(".interactive-ui"));
-  const overCat = physics.isPointOverCat(clientX, clientY);
+  const overCat = physics.isPointOverCat(vx, vy);
   const shouldBeInteractive = overUi || overCat;
 
   if (shouldBeInteractive !== lastInteractiveFlag) {
@@ -440,7 +455,9 @@ function updateInteractiveHitTest(clientX: number, clientY: number): void {
 }
 
 window.addEventListener("mousemove", (e) => {
-  physics.handlePointerMove(e.clientX, e.clientY);
+  lastClientX = e.clientX;
+  lastClientY = e.clientY;
+  physics.handlePointerMove(e.clientX - BLEED_X, e.clientY - BLEED_Y);
   updateInteractiveHitTest(e.clientX, e.clientY);
 });
 
@@ -453,7 +470,7 @@ window.addEventListener("mousedown", (e) => {
   if (el && el.closest(".interactive-ui")) {
     return;
   }
-  physics.handlePointerDown(e.clientX, e.clientY);
+  physics.handlePointerDown(e.clientX - BLEED_X, e.clientY - BLEED_Y);
 });
 
 window.addEventListener("mouseup", () => {
@@ -472,12 +489,16 @@ window.addEventListener("contextmenu", (e) => {
   if (!lastUiState || lastUiState.phase !== "ACTIVE") {
     return;
   }
-  if (physics.isPointOverCat(e.clientX, e.clientY)) {
+  const vx = e.clientX - BLEED_X;
+  const vy = e.clientY - BLEED_Y;
+  if (physics.isPointOverCat(vx, vy)) {
     e.preventDefault();
     const mw = 190;
     const mh = 115;
-    const left = Math.max(8, Math.min(window.innerWidth - mw - 8, e.clientX));
-    const top = Math.max(8, Math.min(window.innerHeight - mh - 8, e.clientY));
+    const viewW = viewportRoot.clientWidth || window.innerWidth;
+    const viewH = viewportRoot.clientHeight || window.innerHeight;
+    const left = Math.max(8, Math.min(viewW - mw - 8, vx));
+    const top = Math.max(8, Math.min(viewH - mh - 8, vy));
     catContextMenu.style.left = `${Math.round(left)}px`;
     catContextMenu.style.top = `${Math.round(top)}px`;
     catContextMenu.classList.remove("hidden");
@@ -527,7 +548,7 @@ function applyUiState(state: RendererUiState): void {
   if (mode !== lastMode) {
     if (mode === "WARNING_CROUCH") {
       warningStartedAt = performance.now();
-      warningTotalMs = state.overlayCommand.countdownMs || 1800;
+      warningTotalMs = state.overlayCommand.countdownMs || 18_000;
       audio.playWarningHiss();
     } else if (mode === "POUNCE_STRIKE" || mode === "DRAGGING_WINDOW") {
       audio.playStrikeMeow();
@@ -564,6 +585,10 @@ function applyUiState(state: RendererUiState): void {
     catSpeechBubble.classList.add("hidden");
     balloonMessage.textContent =
       state.overlayCommand.roastMessageIt || "Miao! Che cosa stai guardando?!";
+    positionBubbleOverCat(warningBalloon, 265);
+    if (lastClientX >= 0 && lastClientY >= 0) {
+      updateInteractiveHitTest(lastClientX, lastClientY);
+    }
   }
 
   const showCourt = state.phase === "ACTIVE" && Boolean(state.negotiation);
@@ -631,7 +656,8 @@ window.purrfocus.onStateUpdate(applyUiState);
 function positionBubbleOverCat(el: HTMLElement, width: number): void {
   const pos = physics.getPosition();
   const bh = el.offsetHeight || 80;
-  const left = Math.max(12, Math.min(window.innerWidth - width - 12, pos.x - 30));
+  const viewW = viewportRoot.clientWidth || window.innerWidth;
+  const left = Math.max(12, Math.min(viewW - width - 12, pos.x - 30));
   const flipBelow = pos.y - bh - 16 < 12;
   const top = flipBelow ? pos.y + CAT_DRAW_SIZE + 14 : pos.y - bh - 16;
   el.classList.toggle("flip-below", flipBelow);

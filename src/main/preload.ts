@@ -16,6 +16,8 @@ const api = {
     ipcRenderer.invoke("enforcer:submit-excuse", excuseText),
   cancelNegotiation: (): Promise<void> =>
     ipcRenderer.invoke("enforcer:cancel-court"),
+  concedeAndCloseNow: (): Promise<void> =>
+    ipcRenderer.invoke("enforcer:strike-now"),
   requestSurrenderPhrase: (): Promise<string> =>
     ipcRenderer.invoke("session:surrender-phrase"),
   cancelSurrenderModal: (): Promise<void> =>

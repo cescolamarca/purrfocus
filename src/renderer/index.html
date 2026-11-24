@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <div id="viewport-root">
     <canvas id="overlay-canvas"></canvas>
 
     <!-- Launcher Modal -->
@@ -166,13 +167,14 @@
     <div id="warning-balloon" class="clippy-balloon interactive-ui hidden">
       <div class="balloon-header">
         <strong>Micio Guardia</strong>
-        <span id="balloon-countdown-text">2.5s</span>
+        <span id="balloon-countdown-text">18.0s</span>
       </div>
       <p id="balloon-message" class="balloon-message"></p>
       <div class="balloon-progress-track">
         <div id="balloon-progress-fill" class="balloon-progress-fill"></div>
       </div>
       <div class="balloon-actions">
+        <button type="button" id="btn-concede-now">Chiudi pure</button>
         <button type="button" id="btn-justify-now" class="default">
           Aspetta! È per studio!
         </button>
@@ -279,6 +281,7 @@
           </div>
         </div>
       </div>
+    </div>
     </div>
 
     <script src="./bundle.js"></script>
