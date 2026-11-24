@@ -13,12 +13,12 @@ body {
 
 #viewport-root {
   position: fixed;
-  left: 4px;
-  top: 48px;
-  width: calc(100vw - 8px);
-  height: calc(100vh - 56px);
+  left: 2px;
+  top: 36px;
+  right: 2px;
+  bottom: 6px;
   transform: translate(0, 0);
-  overflow: hidden;
+  overflow: visible;
   background: transparent !important;
   border: 0;
   outline: none;

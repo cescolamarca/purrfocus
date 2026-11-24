@@ -30,9 +30,11 @@ import { evaluateLocally } from "./localFallbackJudge";
 import {
   configureBorderlessOverlayWindow,
   getActiveWindowSnapshot,
+  getPhysicalWindowRect,
   getWindowClassName,
   hwndFromNativeBuffer,
   restoreAllSavedWindows,
+  setPhysicalWindowBoundsUnclamped,
   setPhysicalWindowClipRect,
   setWindowNoActivate
 } from "./win32";
@@ -65,9 +67,9 @@ let lastShameNote: ShameNoteState | undefined;
 let lastSpeechBubble: CatSpeechBubble | undefined;
 
 const isSmokeTest = process.argv.includes("--smoke-test");
-const BLEED_X = 4;
-const BLEED_TOP = 48;
-const BLEED_BOTTOM = 8;
+const BLEED_X = 2;
+const BLEED_TOP = 36;
+const BLEED_BOTTOM = 6;
 
 app.commandLine.appendSwitch("disable-features", "WebRtcAllowWgcScreenCapturer");
 
@@ -539,6 +541,10 @@ function setupTray(): void {
 }
 
 function getPhysicalViewportClip(): {
+  winX: number;
+  winY: number;
+  winW: number;
+  winH: number;
   physLeft: number;
   physTop: number;
   physRight: number;
@@ -547,11 +553,28 @@ function getPhysicalViewportClip(): {
 } {
   const primary = screen.getPrimaryDisplay();
   const scale = primary.scaleFactor || 1;
-  const physLeft = Math.round(BLEED_X * scale);
-  const physTop = Math.round(BLEED_TOP * scale);
-  const physRight = Math.round((BLEED_X + primary.bounds.width) * scale);
-  const physBottom = Math.round((BLEED_TOP + primary.bounds.height) * scale);
-  return { physLeft, physTop, physRight, physBottom, scale };
+  const bleedPhysLeft = Math.round(BLEED_X * scale);
+  const bleedPhysTop = Math.round(BLEED_TOP * scale);
+  const bleedPhysBottom = Math.round(BLEED_BOTTOM * scale);
+  const physMonW = Math.round(primary.bounds.width * scale);
+  const physMonH = Math.round(primary.bounds.height * scale);
+
+  const winX = Math.round(primary.bounds.x * scale) - bleedPhysLeft;
+  const winY = Math.round(primary.bounds.y * scale) - bleedPhysTop;
+  const winW = physMonW + bleedPhysLeft * 2;
+  const winH = physMonH + bleedPhysTop + bleedPhysBottom;
+
+  return {
+    winX,
+    winY,
+    winW,
+    winH,
+    physLeft: bleedPhysLeft,
+    physTop: bleedPhysTop,
+    physRight: bleedPhysLeft + physMonW,
+    physBottom: bleedPhysTop + physMonH,
+    scale
+  };
 }
 
 function applyViewportClipShape(): void {
@@ -559,6 +582,7 @@ function applyViewportClipShape(): void {
     return;
   }
   const clip = getPhysicalViewportClip();
+  setPhysicalWindowBoundsUnclamped(overlayHwnd, clip.winX, clip.winY, clip.winW, clip.winH);
   setPhysicalWindowClipRect(
     overlayHwnd,
     clip.physLeft,
@@ -575,6 +599,7 @@ function createOverlayWindow(): void {
     y: bounds.y - BLEED_TOP,
     width: bounds.width + BLEED_X * 2,
     height: bounds.height + BLEED_TOP + BLEED_BOTTOM,
+    enableLargerThanScreen: true,
     transparent: true,
     backgroundColor: "#00000000",
     frame: false,
@@ -629,8 +654,9 @@ function createOverlayWindow(): void {
     if (isSmokeTest) {
       const snap = getActiveWindowSnapshot(getOwnPids());
       const clip = getPhysicalViewportClip();
+      const winRect = getPhysicalWindowRect(overlayHwnd);
       console.log(
-        `SMOKE_OK workArea=${JSON.stringify(getWorkAreaDip())} clip=${clip.physLeft},${clip.physTop}..${clip.physRight},${clip.physBottom} scale=${clip.scale} fg=${snap?.processName ?? "none"}`
+        `SMOKE_OK workArea=${JSON.stringify(getWorkAreaDip())} winRect=${JSON.stringify(winRect)} clip=${clip.physLeft},${clip.physTop}..${clip.physRight},${clip.physBottom} scale=${clip.scale} fg=${snap?.processName ?? "none"}`
       );
       setTimeout(() => {
         app.quit();

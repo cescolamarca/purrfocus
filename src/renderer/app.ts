@@ -39,8 +39,8 @@ const viewportRoot = document.getElementById("viewport-root")!;
 const canvas = document.getElementById("overlay-canvas") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 
-const BLEED_X = 4;
-const BLEED_Y = 48;
+const BLEED_X = 2;
+const BLEED_Y = 36;
 
 const launcherBackdrop = document.getElementById("launcher-backdrop")!;
 const previewCanvas = document.getElementById("preview-cat-canvas") as HTMLCanvasElement;

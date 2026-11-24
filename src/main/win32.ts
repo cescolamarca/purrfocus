@@ -590,6 +590,7 @@ const WS_EX_NOACTIVATE = 0x08000000n;
 const SWP_NOSIZE = 0x0001;
 const SWP_NOMOVE = 0x0002;
 const SWP_FRAMECHANGED = 0x0020;
+const SWP_NOSENDCHANGING = 0x0400;
 const DWMWA_NCRENDERING_POLICY = 2;
 const DWMNCRP_DISABLED = 1;
 const DWMWA_TRANSITIONS_FORCEDISABLED = 3;
@@ -820,4 +821,38 @@ export function setPhysicalWindowClipRect(
   if (!ok) {
     api.DeleteObject(hrgn);
   }
+}
+
+export function setPhysicalWindowBoundsUnclamped(
+  hwnd: number,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): void {
+  if (process.platform !== "win32" || !hwnd) {
+    return;
+  }
+  const api = getNativeApi();
+  api.SetWindowPos(
+    hwnd,
+    0,
+    x,
+    y,
+    width,
+    height,
+    SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSENDCHANGING
+  );
+}
+
+export function getPhysicalWindowRect(hwnd: number): Rect | null {
+  if (process.platform !== "win32" || !hwnd) {
+    return null;
+  }
+  const api = getNativeApi();
+  const rectOut = { left: 0, top: 0, right: 0, bottom: 0 };
+  if (api.GetWindowRect(hwnd, rectOut) === 0) {
+    return null;
+  }
+  return toRect(rectOut);
 }

@@ -171,9 +171,9 @@ export class CatPhysicsEngine {
   private computePreferredPerchY(): number {
     const study = this.command.studyRect;
     if (study && study.width > 160 && study.top >= this.workArea.top + CAT_DRAW_SIZE - 8) {
-      return Math.round(study.top - CAT_DRAW_SIZE + 8);
+      return Math.round(study.top - CAT_DRAW_SIZE + 2);
     }
-    return Math.round(this.workArea.bottom - CAT_DRAW_SIZE + 4);
+    return Math.round(this.workArea.bottom - CAT_DRAW_SIZE);
   }
 
   private pickNextPerchPoint(): void {
