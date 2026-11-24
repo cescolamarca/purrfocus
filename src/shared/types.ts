@@ -79,6 +79,21 @@ export interface SessionStats {
   excusesRejected: number;
   focusChecksTotal: number;
   distractionChecksTotal: number;
+  rageCount: number;
+  completedEarly?: boolean;
+  completionNote?: string;
+}
+
+export interface ShameNoteState {
+  id: number;
+  strikeNumber: number;
+  targetTitle: string;
+  messageIt: string;
+}
+
+export interface CatSpeechBubble {
+  text: string;
+  expiresAt: number;
 }
 
 export type CatBehaviorMode =
@@ -123,4 +138,6 @@ export interface RendererUiState {
   workArea: Rect;
   negotiation?: NegotiationState;
   surrenderPhrase?: string;
+  shameNote?: ShameNoteState;
+  catSpeechBubble?: CatSpeechBubble;
 }

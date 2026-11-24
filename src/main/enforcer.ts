@@ -6,14 +6,17 @@ import type {
   QuotaStatus,
   Rect,
   SessionStats,
+  ShameNoteState,
   WindowSnapshot
 } from "../shared/types";
 import { evaluateExcuseWithAi } from "./geminiJudge";
 import {
   animateWindowDragAndMinimize,
   focusStudyWindow,
+  getCursorPhysicalPoint,
+  hijackCursorToPoint,
   sendCtrlWToBrowser,
-  tugCursorTowards
+  shakeWindowViolently
 } from "./win32";
 
 export type EnforcerPhase = "IDLE" | "WARNING" | "NEGOTIATING" | "STRIKING";
@@ -34,6 +37,8 @@ export interface EnforcerCallbacks {
   getLastStudyDipRect: () => Rect | undefined;
   grantExcuse: (key: string, minutes: number) => void;
   invalidateKey: (key: string) => void;
+  onShameNote: (note: ShameNoteState) => void;
+  onSpeechBubble: (text: string, durationMs: number) => void;
   onPhaseOrCommand: (info: {
     phase: EnforcerPhase;
     command: CatOverlayCommand;
@@ -43,6 +48,8 @@ export interface EnforcerCallbacks {
   }) => void;
 }
 
+const WARNING_COUNTDOWN_MS = 1800;
+
 export class EnforcerEngine {
   private phase: EnforcerPhase = "IDLE";
   private activeTarget: ActiveTarget | null = null;
@@ -51,6 +58,7 @@ export class EnforcerEngine {
   private negotiationDeadline = 0;
   private negotiationPending = false;
   private disposed = false;
+  private shameCounter = 0;
 
   constructor(
     private readonly config: {
@@ -90,7 +98,7 @@ export class EnforcerEngine {
         roastMessageIt:
           target.verdict.roastMessageIt ||
           "Miao! Questa scheda non sembra proprio materiale di studio...",
-        countdownMs: 2500,
+        countdownMs: WARNING_COUNTDOWN_MS,
         hwnd: target.win.hwnd
       }
     });
@@ -98,7 +106,50 @@ export class EnforcerEngine {
     this.clearTimers();
     this.warningTimer = setTimeout(() => {
       void this.executeStrike();
-    }, 2500);
+    }, WARNING_COUNTDOWN_MS);
+  }
+
+  async handleIdlePhoneNudge(idleSeconds: number): Promise<void> {
+    if (this.disposed || this.phase !== "IDLE") {
+      return;
+    }
+    this.phase = "STRIKING";
+    const physBounds = this.callbacks.getPhysicalScreenBounds();
+    const cur = getCursorPhysicalPoint();
+    const centerX = Math.round(physBounds.left + physBounds.width * 0.5);
+    const centerY = Math.round(physBounds.top + physBounds.height * 0.45);
+    const pullX = Math.round((cur.x + centerX) * 0.5);
+    const pullY = Math.round((cur.y + centerY) * 0.5);
+
+    const dipPt = this.callbacks.toDipPoint(pullX >= 0 ? { x: pullX, y: pullY } : { x: 500, y: 360 });
+    this.callbacks.onSpeechBubble(
+      `Ehi! ${idleSeconds}s senza toccare il PC... posa il telefono e torna su «${this.config.goal}»!`,
+      4500
+    );
+    this.callbacks.onPhaseOrCommand({
+      phase: "STRIKING",
+      command: {
+        mode: "POUNCE_STRIKE",
+        targetRect: {
+          left: dipPt.x - 100,
+          top: dipPt.y - 20,
+          right: dipPt.x + 100,
+          bottom: dipPt.y + 80,
+          width: 200,
+          height: 100
+        },
+        workArea: this.callbacks.getWorkAreaDip()
+      }
+    });
+
+    await hijackCursorToPoint(pullX, pullY, 20, 480);
+    if (!this.disposed) {
+      setTimeout(() => {
+        if (!this.disposed) {
+          this.returnToIdle();
+        }
+      }, 650);
+    }
   }
 
   openExcuseCourt(): void {
@@ -204,7 +255,7 @@ export class EnforcerEngine {
         if (!this.disposed) {
           this.returnToIdle(this.callbacks.toDipRect(target.win.rawRect));
         }
-      }, 1600);
+      }, 1400);
       return;
     }
 
@@ -231,7 +282,7 @@ export class EnforcerEngine {
       if (!this.disposed) {
         void this.executeStrike();
       }
-    }, 1250);
+    }, 1150);
   }
 
   cancelNegotiationAndStrike(): void {
@@ -242,6 +293,19 @@ export class EnforcerEngine {
     void this.executeStrike();
   }
 
+  private maybeEmitShameNote(target: ActiveTarget): void {
+    if (this.stats.rageCount < 2) {
+      return;
+    }
+    this.shameCounter += 1;
+    this.callbacks.onShameNote({
+      id: this.shameCounter,
+      strikeNumber: this.stats.rageCount,
+      targetTitle: target.win.title || target.win.processName,
+      messageIt: `VERBALE #${this.stats.rageCount}: Ti ho già beccato ${this.stats.rageCount} volte a divagare invece di completare "${this.config.goal}". Il gatto sta perdendo la pazienza!`
+    });
+  }
+
   private async executeStrike(): Promise<void> {
     if (this.disposed || !this.activeTarget) {
       this.returnToIdle();
@@ -250,12 +314,14 @@ export class EnforcerEngine {
 
     this.clearTimers();
     this.phase = "STRIKING";
+    this.stats.rageCount += 1;
     const target = this.activeTarget;
     const isBrowserTab =
       target.win.isBrowser && target.verdict.distractionTarget !== "DESKTOP_APP";
 
     const rawRect = target.win.rawRect;
     const dipTargetRect = this.callbacks.toDipRect(rawRect);
+    const shakeAmount = this.stats.rageCount >= 2 ? 22 : 8;
 
     if (isBrowserTab) {
       this.callbacks.onPhaseOrCommand({
@@ -268,9 +334,10 @@ export class EnforcerEngine {
         }
       });
 
-      const tugTargetX = Math.round(rawRect.left + Math.min(260, Math.max(80, rawRect.width * 0.35)));
-      const tugTargetY = Math.round(rawRect.top + 22);
-      await tugCursorTowards(tugTargetX, tugTargetY, 240);
+      const tugTargetX = Math.round(rawRect.left + Math.min(280, Math.max(90, rawRect.width * 0.35)));
+      const tugTargetY = Math.round(rawRect.top + 24);
+      await hijackCursorToPoint(tugTargetX, tugTargetY, shakeAmount, 380);
+      await shakeWindowViolently(target.win.hwnd, 260);
 
       if (!this.disposed) {
         const closed = sendCtrlWToBrowser(target.win.hwnd);
@@ -282,6 +349,7 @@ export class EnforcerEngine {
         if (studyHwnd && studyHwnd !== target.win.hwnd) {
           focusStudyWindow(studyHwnd);
         }
+        this.maybeEmitShameNote(target);
       }
 
       setTimeout(() => {
@@ -301,6 +369,13 @@ export class EnforcerEngine {
         roastMessageIt: target.verdict.roastMessageIt
       }
     });
+
+    await hijackCursorToPoint(
+      Math.round(rawRect.left + rawRect.width * 0.45),
+      Math.round(rawRect.top + 18),
+      shakeAmount,
+      260
+    );
 
     const dragged = await animateWindowDragAndMinimize(
       target.win.hwnd,
@@ -331,6 +406,7 @@ export class EnforcerEngine {
       if (studyHwnd && studyHwnd !== target.win.hwnd) {
         focusStudyWindow(studyHwnd);
       }
+      this.maybeEmitShameNote(target);
       this.returnToIdle();
     }
   }

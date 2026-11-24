@@ -39,12 +39,15 @@ export class CatPhysicsEngine {
   private lastSleepParticleAt = 0;
 
   private isGrabbed = false;
+  private isFalling = false;
+  private vy = 0;
   private grabOffsetX = 0;
   private grabOffsetY = 0;
   private dragStartX = 0;
   private dragStartY = 0;
   private draggedDistance = 0;
 
+  private treatPos: { x: number; y: number } | null = null;
   private pawPrints: PawPrint[] = [];
   private particles: FloatingParticle[] = [];
   private lastPawX = 0;
@@ -108,6 +111,8 @@ export class CatPhysicsEngine {
       return false;
     }
     this.isGrabbed = true;
+    this.isFalling = false;
+    this.vy = 0;
     this.grabOffsetX = px - this.x;
     this.grabOffsetY = py - this.y;
     this.dragStartX = px;
@@ -128,9 +133,9 @@ export class CatPhysicsEngine {
     this.y = Math.max(this.workArea.top, Math.min(this.workArea.bottom - CAT_DRAW_SIZE, py - this.grabOffsetY));
   }
 
-  handlePointerUp(): void {
+  handlePointerUp(): "PETTED" | "DROPPED" | null {
     if (!this.isGrabbed) {
-      return;
+      return null;
     }
     this.isGrabbed = false;
     if (this.draggedDistance < 10) {
@@ -139,10 +144,28 @@ export class CatPhysicsEngine {
       this.onPetCallback();
       this.idleSubMode = "SIT";
       this.idleSubTimerMs = 2800;
-    } else {
-      this.perchTargetX = this.x;
-      this.perchTargetY = this.computePreferredPerchY();
+      return "PETTED";
     }
+    this.perchTargetX = this.x;
+    this.perchTargetY = this.computePreferredPerchY();
+    if (this.y < this.perchTargetY - 6) {
+      this.isFalling = true;
+      this.vy = 0;
+    }
+    return "DROPPED";
+  }
+
+  chaseTreat(tx: number, ty: number): void {
+    this.isFalling = false;
+    this.vy = 0;
+    this.treatPos = {
+      x: Math.max(this.workArea.left + 24, Math.min(this.workArea.right - 24, tx)),
+      y: Math.max(this.workArea.top + 48, Math.min(this.workArea.bottom - 24, ty))
+    };
+  }
+
+  emitHissFeedback(text = "!"): void {
+    this.spawnParticle(this.x + 36, this.y - 4, text, "#ff1744", 1200);
   }
 
   private computePreferredPerchY(): number {
@@ -224,6 +247,50 @@ export class CatPhysicsEngine {
     }
 
     if (this.isGrabbed) {
+      return;
+    }
+
+    if (this.isFalling && this.command.mode === "IDLE_PERCH") {
+      const groundY = this.computePreferredPerchY();
+      this.vy += 1850 * dt;
+      this.y += this.vy * dt;
+      this.animState = "POUNCE";
+      if (this.y >= groundY) {
+        this.y = groundY;
+        if (Math.abs(this.vy) > 160) {
+          this.vy = -this.vy * 0.32;
+        } else {
+          this.vy = 0;
+          this.isFalling = false;
+          this.idleSubMode = "SIT";
+          this.idleSubTimerMs = 2000;
+        }
+      }
+      return;
+    }
+
+    if (this.treatPos && this.command.mode === "IDLE_PERCH") {
+      const targetX = this.treatPos.x - CAT_DRAW_SIZE * 0.5;
+      const targetY = this.treatPos.y - CAT_DRAW_SIZE * 0.72;
+      const dx = targetX - this.x;
+      const dy = targetY - this.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 18) {
+        const speed = 460;
+        const step = Math.min(dist, speed * dt);
+        this.x += (dx / dist) * step;
+        this.y += (dy / dist) * step;
+        this.dir8 = vectorToDirection8(dx, dy);
+        this.animState = "WALKING";
+        this.advanceAnim(dtMs, 95);
+      } else {
+        this.treatPos = null;
+        this.spawnParticle(this.x + 28, this.y - 4, "NOM!", "#ffd600", 1100);
+        this.spawnParticle(this.x + 48, this.y + 6, "♥", "#ff4d6d", 1200);
+        this.onPetCallback();
+        this.idleSubMode = "SIT";
+        this.idleSubTimerMs = 2500;
+      }
       return;
     }
 
@@ -362,6 +429,19 @@ export class CatPhysicsEngine {
       ctx.fillRect(4, 0, 2, 2);
       ctx.fillRect(3, 2, 2, 2);
       ctx.restore();
+    }
+
+    if (this.treatPos) {
+      const tx = Math.round(this.treatPos.x);
+      const ty = Math.round(this.treatPos.y);
+      ctx.fillStyle = "#1a1a1a";
+      ctx.fillRect(tx - 10, ty - 6, 20, 12);
+      ctx.fillStyle = "#4fc3f7";
+      ctx.fillRect(tx - 8, ty - 4, 13, 8);
+      ctx.fillStyle = "#0288d1";
+      ctx.fillRect(tx + 5, ty - 5, 5, 10);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(tx - 6, ty - 2, 2, 2);
     }
 
     if (this.spriteImg && this.spriteImg.complete && this.spriteImg.naturalWidth >= 64) {

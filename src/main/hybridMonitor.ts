@@ -1,6 +1,7 @@
-import { desktopCapturer } from "electron";
+import { desktopCapturer, nativeImage, screen } from "electron";
 import type { AiVerdict, ModelId, QuotaStatus, WindowSnapshot } from "../shared/types";
 import { evaluateActivityWithAi } from "./geminiJudge";
+import { captureScreenPhysicalBgra, getSystemIdleMilliseconds } from "./win32";
 
 export const AMBIGUOUS_HOSTS = [
   "youtube",
@@ -54,9 +55,9 @@ export interface MonitorTimings {
 }
 
 export const DEFAULT_MONITOR_TIMINGS: MonitorTimings = {
-  debounceMs: 1200,
-  ambiguousTtlMs: 25_000,
-  auditIntervalMs: 45_000
+  debounceMs: 650,
+  ambiguousTtlMs: 12_000,
+  auditIntervalMs: 25_000
 };
 
 export interface MonitorStateSnapshot {
@@ -163,16 +164,30 @@ export function decideMonitorAction(
 
 export async function capturePrimaryScreenJpeg(): Promise<string | null> {
   try {
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const scale = primaryDisplay.scaleFactor || 1;
+    const physW = Math.round(primaryDisplay.bounds.width * scale);
+    const physH = Math.round(primaryDisplay.bounds.height * scale);
+    const outW = 960;
+    const outH = 540;
+
+    const bgra = captureScreenPhysicalBgra(physW, physH, outW, outH);
+    if (bgra) {
+      const img = nativeImage.createFromBitmap(bgra, { width: outW, height: outH });
+      if (!img.isEmpty()) {
+        return img.toJPEG(60).toString("base64");
+      }
+    }
+
     const sources = await desktopCapturer.getSources({
       types: ["screen"],
-      thumbnailSize: { width: 960, height: 540 }
+      thumbnailSize: { width: outW, height: outH }
     });
     const primary = sources[0];
     if (!primary || primary.thumbnail.isEmpty()) {
       return null;
     }
-    const jpeg = primary.thumbnail.toJPEG(60);
-    return jpeg.toString("base64");
+    return primary.thumbnail.toJPEG(60).toString("base64");
   } catch {
     return null;
   }
@@ -194,6 +209,7 @@ export interface MonitorCallbacks {
     screenshotBase64: string | null;
     key: string;
   }) => void;
+  onIdleDetected: (idleSeconds: number) => void;
 }
 
 export class HybridMonitor {
@@ -209,6 +225,7 @@ export class HybridMonitor {
   private lastVerifiedStudyHwnd = 0;
   private lastQuotaStatus: QuotaStatus = "OK";
   private lastUsedFallback = false;
+  private lastIdleNudgeAt = 0;
 
   constructor(
     private readonly config: {
@@ -224,7 +241,7 @@ export class HybridMonitor {
     this.state.lastVisionCheckMs = Date.now() - DEFAULT_MONITOR_TIMINGS.auditIntervalMs;
     this.timer = setInterval(() => {
       void this.tick();
-    }, 1000);
+    }, 650);
   }
 
   stop(): void {
@@ -259,6 +276,91 @@ export class HybridMonitor {
     return active;
   }
 
+  async forceImmediateCheck(): Promise<AiVerdict | null> {
+    if (this.isEvaluating || this.callbacks.isBusyWithIntervention()) {
+      return null;
+    }
+    const active = this.callbacks.getActiveWindow();
+    if (!active) {
+      return null;
+    }
+    const { snapshot, className } = active;
+    if (isSystemSurface(snapshot.processName, className, snapshot.title)) {
+      return null;
+    }
+    const key = normalizeWindowKey(snapshot.processName, snapshot.title);
+    this.state.verdictCache.delete(key);
+    this.state.pendingKey = key;
+    this.state.pendingSinceMs = Date.now() - DEFAULT_MONITOR_TIMINGS.debounceMs - 50;
+    return this.evaluateAndHandle(snapshot, key);
+  }
+
+  private async evaluateAndHandle(snapshot: WindowSnapshot, key: string): Promise<AiVerdict> {
+    this.isEvaluating = true;
+    this.callbacks.onStatusUpdate({
+      checkingVision: true,
+      quotaStatus: this.lastQuotaStatus,
+      usedFallback: this.lastUsedFallback,
+      studyWindow: null
+    });
+
+    try {
+      const screenshotBase64 = await capturePrimaryScreenJpeg();
+      const outcome = await evaluateActivityWithAi({
+        modelId: this.config.modelId,
+        apiKeyOverride: this.config.apiKeyOverride,
+        goal: this.config.goal,
+        windowSnapshot: snapshot,
+        screenshotBase64,
+        approvedExceptions: this.getActiveExceptionDescriptions(Date.now())
+      });
+
+      this.lastQuotaStatus = outcome.quotaStatus;
+      this.lastUsedFallback = outcome.usedFallback;
+      this.state.lastVisionCheckMs = Date.now();
+
+      const verdict = outcome.data;
+      if (verdict.verdict === "STUDYING") {
+        this.state.verdictCache.set(key, {
+          verdict,
+          storedAtMs: Date.now(),
+          expiresAtMs: Date.now() + verdict.cacheSeconds * 1000
+        });
+        this.lastVerifiedStudyHwnd = snapshot.hwnd;
+        this.callbacks.onStudyWindowConfirmed(snapshot);
+        this.callbacks.onStatusUpdate({
+          checkingVision: false,
+          quotaStatus: this.lastQuotaStatus,
+          usedFallback: this.lastUsedFallback,
+          studyWindow: snapshot
+        });
+      } else if (verdict.verdict === "DISTRACTED" && verdict.confidence >= 0.6) {
+        this.callbacks.onStatusUpdate({
+          checkingVision: false,
+          quotaStatus: this.lastQuotaStatus,
+          usedFallback: this.lastUsedFallback,
+          studyWindow: null
+        });
+        this.callbacks.onDistractionDetected({
+          win: snapshot,
+          verdict,
+          screenshotBase64,
+          key
+        });
+      } else {
+        this.callbacks.onStatusUpdate({
+          checkingVision: false,
+          quotaStatus: this.lastQuotaStatus,
+          usedFallback: this.lastUsedFallback,
+          studyWindow: null
+        });
+      }
+      return verdict;
+    } finally {
+      this.isEvaluating = false;
+    }
+  }
+
   async tick(): Promise<void> {
     if (this.isEvaluating || this.callbacks.isBusyWithIntervention()) {
       return;
@@ -271,6 +373,17 @@ export class HybridMonitor {
 
     const { snapshot, className } = active;
     const nowMs = Date.now();
+
+    const idleMs = getSystemIdleMilliseconds();
+    const titleLower = snapshot.title.toLowerCase();
+    const watchingLecture =
+      titleLower.includes("lezione") || titleLower.includes("lecture") || titleLower.includes("corso");
+    if (idleMs >= 55_000 && !watchingLecture && nowMs - this.lastIdleNudgeAt >= 45_000) {
+      this.lastIdleNudgeAt = nowMs;
+      this.callbacks.onIdleDetected(Math.round(idleMs / 1000));
+      return;
+    }
+
     const decision = decideMonitorAction(this.state, snapshot, className, nowMs);
 
     if (this.state.pendingKey !== decision.key) {
@@ -303,67 +416,6 @@ export class HybridMonitor {
       return;
     }
 
-    this.isEvaluating = true;
-    this.callbacks.onStatusUpdate({
-      checkingVision: true,
-      quotaStatus: this.lastQuotaStatus,
-      usedFallback: this.lastUsedFallback,
-      studyWindow: null
-    });
-
-    try {
-      const screenshotBase64 = await capturePrimaryScreenJpeg();
-      const outcome = await evaluateActivityWithAi({
-        modelId: this.config.modelId,
-        apiKeyOverride: this.config.apiKeyOverride,
-        goal: this.config.goal,
-        windowSnapshot: snapshot,
-        screenshotBase64,
-        approvedExceptions: this.getActiveExceptionDescriptions(nowMs)
-      });
-
-      this.lastQuotaStatus = outcome.quotaStatus;
-      this.lastUsedFallback = outcome.usedFallback;
-      this.state.lastVisionCheckMs = Date.now();
-
-      const verdict = outcome.data;
-      if (verdict.verdict === "STUDYING") {
-        this.state.verdictCache.set(decision.key, {
-          verdict,
-          storedAtMs: Date.now(),
-          expiresAtMs: Date.now() + verdict.cacheSeconds * 1000
-        });
-        this.lastVerifiedStudyHwnd = snapshot.hwnd;
-        this.callbacks.onStudyWindowConfirmed(snapshot);
-        this.callbacks.onStatusUpdate({
-          checkingVision: false,
-          quotaStatus: this.lastQuotaStatus,
-          usedFallback: this.lastUsedFallback,
-          studyWindow: snapshot
-        });
-      } else if (verdict.verdict === "DISTRACTED" && verdict.confidence >= 0.6) {
-        this.callbacks.onStatusUpdate({
-          checkingVision: false,
-          quotaStatus: this.lastQuotaStatus,
-          usedFallback: this.lastUsedFallback,
-          studyWindow: null
-        });
-        this.callbacks.onDistractionDetected({
-          win: snapshot,
-          verdict,
-          screenshotBase64,
-          key: decision.key
-        });
-      } else {
-        this.callbacks.onStatusUpdate({
-          checkingVision: false,
-          quotaStatus: this.lastQuotaStatus,
-          usedFallback: this.lastUsedFallback,
-          studyWindow: null
-        });
-      }
-    } finally {
-      this.isEvaluating = false;
-    }
+    await this.evaluateAndHandle(snapshot, decision.key);
   }
 }

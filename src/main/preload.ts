@@ -22,6 +22,12 @@ const api = {
     ipcRenderer.invoke("session:cancel-surrender"),
   attemptSurrender: (typedPhrase: string): Promise<{ valid: boolean; reason?: string }> =>
     ipcRenderer.invoke("session:attempt-surrender", typedPhrase),
+  setModalLock: (locked: boolean): Promise<void> =>
+    ipcRenderer.invoke("session:set-modal-lock", locked),
+  completeTask: (completionNote: string): Promise<void> =>
+    ipcRenderer.invoke("session:complete-task", completionNote),
+  forceCheckNow: (): Promise<string> =>
+    ipcRenderer.invoke("monitor:force-check"),
   toggleMute: (muted: boolean): Promise<void> =>
     ipcRenderer.invoke("session:toggle-mute", muted),
   resetToLauncher: (): Promise<void> =>
@@ -35,6 +41,11 @@ const api = {
     };
     ipcRenderer.on("state:update", listener);
     return () => ipcRenderer.removeListener("state:update", listener);
+  },
+  onOpenCompleteRequested: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("ui:open-complete", listener);
+    return () => ipcRenderer.removeListener("ui:open-complete", listener);
   }
 };
 

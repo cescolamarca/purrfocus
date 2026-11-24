@@ -4,6 +4,7 @@ import { evaluateExcuseLocally, evaluateLocally } from "../src/main/localFallbac
 import {
   INPUT_STRUCT_SIZE,
   canSendCtrlWSafely,
+  getSystemIdleMilliseconds,
   isBrowserProcess
 } from "../src/main/win32";
 import type { WindowSnapshot } from "../src/shared/types";
@@ -42,12 +43,18 @@ describe("safety guards, Win32 structs, anti-cheat and local fallback", () => {
     expect(validateSurrenderInput(phrase, phrase, 12_000).valid).toBe(true);
   });
 
-  it("classifies study vs distraction cleanly in local fallback mode", () => {
+  it("classifies study vs distraction strictly in local fallback mode", () => {
     const ide = evaluateLocally(
       "Ripasso Grafi",
       makeWin("code.exe", "dijkstra.ts - Visual Studio Code", false)
     );
     expect(ide.verdict).toBe("STUDYING");
+
+    const goalPdf = evaluateLocally(
+      "Ripasso Grafi",
+      makeWin("chrome.exe", "grafi_cammini_minimi.pdf - Google Chrome", true)
+    );
+    expect(goalPdf.verdict).toBe("STUDYING");
 
     const ig = evaluateLocally(
       "Ripasso Grafi",
@@ -56,10 +63,45 @@ describe("safety guards, Win32 structs, anti-cheat and local fallback", () => {
     expect(ig.verdict).toBe("DISTRACTED");
     expect(ig.distractionTarget).toBe("BROWSER_TAB");
 
+    const shopping = evaluateLocally(
+      "Ripasso Grafi",
+      makeWin("chrome.exe", "Amazon.it: Offerte del giorno", true)
+    );
+    expect(shopping.verdict).toBe("DISTRACTED");
+    expect(shopping.distractionTarget).toBe("BROWSER_TAB");
+
+    const unrelatedTab = evaluateLocally(
+      "Ripasso Grafi",
+      makeWin("chrome.exe", "Classifica Serie A Live - TuttoSport", true)
+    );
+    expect(unrelatedTab.verdict).toBe("DISTRACTED");
+    expect(unrelatedTab.distractionTarget).toBe("BROWSER_TAB");
+
+    const ytEntertainment = evaluateLocally(
+      "Ripasso Grafi",
+      makeWin("chrome.exe", "Top 10 Funny Moments - YouTube", true)
+    );
+    expect(ytEntertainment.verdict).toBe("DISTRACTED");
+    expect(ytEntertainment.distractionTarget).toBe("BROWSER_TAB");
+
+    const ytLecture = evaluateLocally(
+      "Ripasso Grafi",
+      makeWin("chrome.exe", "Lezione 5 - Algoritmi sui Grafi - YouTube", true)
+    );
+    expect(ytLecture.verdict).toBe("STUDYING");
+
+    const unknownApp = evaluateLocally(
+      "Ripasso Grafi",
+      makeWin("randomgame.exe", "Launcher", false)
+    );
+    expect(unknownApp.verdict).toBe("DISTRACTED");
+    expect(unknownApp.distractionTarget).toBe("DESKTOP_APP");
+
     const game = evaluateLocally("Ripasso Grafi", makeWin("steam.exe", "Steam", false));
     expect(game.verdict).toBe("DISTRACTED");
     expect(game.distractionTarget).toBe("DESKTOP_APP");
 
+    expect(getSystemIdleMilliseconds()).toBeGreaterThanOrEqual(0);
     expect(evaluateExcuseLocally("Ripasso Grafi", "asd").approved).toBe(false);
     expect(
       evaluateExcuseLocally("Ripasso Grafi", "Sto guardando la lezione sui grafi di Dijkstra").approved

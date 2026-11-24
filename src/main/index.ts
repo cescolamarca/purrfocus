@@ -14,23 +14,31 @@ import { buildSurrenderPhrase, validateSurrenderInput } from "../shared/antiChea
 import type {
   CatOverlayCommand,
   CatSkinManifestEntry,
+  CatSpeechBubble,
   MonitorStatusBadge,
   QuotaStatus,
   Rect,
   RendererUiState,
   SessionConfig,
   SessionStats,
+  ShameNoteState,
   WindowSnapshot
 } from "../shared/types";
 import { EnforcerEngine } from "./enforcer";
 import { HybridMonitor } from "./hybridMonitor";
 import {
+  configureBorderlessOverlayWindow,
   getActiveWindowSnapshot,
   getWindowClassName,
-  restoreAllSavedWindows
+  hwndFromNativeBuffer,
+  restoreAllSavedWindows,
+  setWindowNoActivate
 } from "./win32";
 
 let mainWindow: BrowserWindow | null = null;
+let overlayHwnd = 0;
+let lastInteractive: boolean | null = null;
+let lastFocusable: boolean | null = null;
 let tray: Tray | null = null;
 let monitor: HybridMonitor | null = null;
 let enforcer: EnforcerEngine | null = null;
@@ -48,11 +56,15 @@ let badge: MonitorStatusBadge = {
 let lastOverlayCommand: CatOverlayCommand = { mode: "IDLE_PERCH" };
 let lastStudyWindowDipRect: Rect | undefined;
 let surrenderOpenedAt = 0;
-let surrenderModalOpen = false;
+let modalLockOpen = false;
 let currentSurrenderPhrase = "";
 let lastNegotiation: RendererUiState["negotiation"];
+let lastShameNote: ShameNoteState | undefined;
+let lastSpeechBubble: CatSpeechBubble | undefined;
 
 const isSmokeTest = process.argv.includes("--smoke-test");
+
+app.commandLine.appendSwitch("disable-features", "WebRtcAllowWgcScreenCapturer");
 
 function createEmptyStats(durationMinutes: number): SessionStats {
   return {
@@ -64,7 +76,8 @@ function createEmptyStats(durationMinutes: number): SessionStats {
     excusesAccepted: 0,
     excusesRejected: 0,
     focusChecksTotal: 0,
-    distractionChecksTotal: 0
+    distractionChecksTotal: 0,
+    rageCount: 0
   };
 }
 
@@ -159,7 +172,10 @@ function pushUiState(): void {
     },
     workArea: getWorkAreaDip(),
     negotiation: lastNegotiation,
-    surrenderPhrase: currentSurrenderPhrase || undefined
+    surrenderPhrase: currentSurrenderPhrase || undefined,
+    shameNote: lastShameNote,
+    catSpeechBubble:
+      lastSpeechBubble && lastSpeechBubble.expiresAt > Date.now() ? lastSpeechBubble : undefined
   };
   mainWindow.webContents.send("state:update", state);
 }
@@ -195,14 +211,38 @@ function teardownSession(): void {
   enforcer?.dispose();
   enforcer = null;
   lastNegotiation = undefined;
+  lastShameNote = undefined;
+  lastSpeechBubble = undefined;
+  modalLockOpen = false;
 }
 
-function finishSession(completedNaturally: boolean): void {
+function applyOverlayInputState(interactive: boolean, focusable: boolean): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (lastInteractive !== interactive) {
+    lastInteractive = interactive;
+    mainWindow.setIgnoreMouseEvents(!interactive, { forward: true });
+  }
+  if (lastFocusable !== focusable) {
+    lastFocusable = focusable;
+    setWindowNoActivate(overlayHwnd, !focusable);
+  }
+  if (interactive && focusable) {
+    mainWindow.focus();
+  }
+}
+
+function finishSession(completedNaturally: boolean, completionNote?: string): void {
   teardownSession();
+  if (completionNote) {
+    stats.completedEarly = true;
+    stats.completionNote = completionNote;
+  }
   phase = "REPORT";
   badge = {
     state: "FINISHED",
-    label: completedNaturally ? "Sessione completata!" : "Resa registrata",
+    label: completedNaturally ? "Attività completata!" : "Resa registrata",
     quotaStatus: badge.quotaStatus,
     usedFallback: badge.usedFallback
   };
@@ -210,11 +250,7 @@ function finishSession(completedNaturally: boolean): void {
     mode: completedNaturally ? "VICTORY" : "IDLE_PERCH",
     workArea: getWorkAreaDip()
   };
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setIgnoreMouseEvents(false);
-    mainWindow.setFocusable(true);
-    mainWindow.focus();
-  }
+  applyOverlayInputState(true, true);
   pushUiState();
 }
 
@@ -236,10 +272,7 @@ function startStudySession(config: SessionConfig): void {
     workArea: getWorkAreaDip()
   };
 
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setFocusable(false);
-    mainWindow.setIgnoreMouseEvents(true, { forward: true });
-  }
+  applyOverlayInputState(false, false);
 
   enforcer = new EnforcerEngine(
     {
@@ -257,6 +290,14 @@ function startStudySession(config: SessionConfig): void {
       getLastStudyDipRect: () => lastStudyWindowDipRect,
       grantExcuse: (key, minutes) => monitor?.grantTemporaryExcuse(key, minutes),
       invalidateKey: (key) => monitor?.invalidateKey(key),
+      onShameNote: (note) => {
+        lastShameNote = note;
+        pushUiState();
+      },
+      onSpeechBubble: (text, durationMs) => {
+        lastSpeechBubble = { text, expiresAt: Date.now() + durationMs };
+        pushUiState();
+      },
       onPhaseOrCommand: (info) => {
         lastOverlayCommand = info.command;
         lastNegotiation = info.negotiation;
@@ -264,16 +305,11 @@ function startStudySession(config: SessionConfig): void {
           badge = { ...badge, state: "WARNING", label: "Distrazione rilevata!" };
         } else if (info.phase === "NEGOTIATING") {
           badge = { ...badge, state: "NEGOTIATING", label: "Tribunale Felino" };
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.setIgnoreMouseEvents(false);
-            mainWindow.setFocusable(true);
-            mainWindow.focus();
-          }
+          applyOverlayInputState(true, true);
         } else if (info.phase === "STRIKING") {
           badge = { ...badge, state: "STRIKING", label: "Zampata in corso!" };
-          if (mainWindow && !mainWindow.isDestroyed() && !surrenderModalOpen) {
-            mainWindow.setFocusable(false);
-            mainWindow.setIgnoreMouseEvents(true, { forward: true });
+          if (!modalLockOpen) {
+            applyOverlayInputState(false, false);
           }
         } else {
           if (info.quotaStatus !== undefined && info.usedFallback !== undefined) {
@@ -281,9 +317,8 @@ function startStudySession(config: SessionConfig): void {
           } else {
             badge = { ...badge, state: "STUDYING", label: "Studio OK" };
           }
-          if (mainWindow && !mainWindow.isDestroyed() && !surrenderModalOpen) {
-            mainWindow.setFocusable(false);
-            mainWindow.setIgnoreMouseEvents(true, { forward: true });
+          if (!modalLockOpen) {
+            applyOverlayInputState(false, false);
           }
         }
         pushUiState();
@@ -337,6 +372,9 @@ function startStudySession(config: SessionConfig): void {
       },
       onDistractionDetected: (info) => {
         enforcer?.handleDistraction(info);
+      },
+      onIdleDetected: (idleSeconds) => {
+        void enforcer?.handleIdlePhoneNudge(idleSeconds);
       }
     }
   );
@@ -417,9 +455,18 @@ function setupTray(): void {
         click: () => {
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.show();
-            mainWindow.setIgnoreMouseEvents(false);
-            mainWindow.setFocusable(true);
-            mainWindow.focus();
+            applyOverlayInputState(true, true);
+          }
+        }
+      },
+      {
+        label: "Segna Attività Completata",
+        click: () => {
+          if (phase === "ACTIVE" && mainWindow && !mainWindow.isDestroyed()) {
+            modalLockOpen = true;
+            mainWindow.show();
+            applyOverlayInputState(true, true);
+            mainWindow.webContents.send("ui:open-complete");
           }
         }
       },
@@ -455,15 +502,20 @@ function createOverlayWindow(): void {
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
-    height: bounds.height,
+    height: Math.max(200, bounds.height - 1),
     transparent: true,
+    backgroundColor: "#00000000",
+    backgroundMaterial: "none",
     frame: false,
+    thickFrame: false,
+    roundedCorners: false,
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
     movable: false,
     hasShadow: false,
     focusable: true,
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -471,13 +523,26 @@ function createOverlayWindow(): void {
     }
   });
 
+  overlayHwnd = hwndFromNativeBuffer(mainWindow.getNativeWindowHandle());
+  lastInteractive = null;
+  lastFocusable = null;
+  configureBorderlessOverlayWindow(overlayHwnd, true);
   mainWindow.setAlwaysOnTop(true, "screen-saver");
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  mainWindow.once("ready-to-show", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    configureBorderlessOverlayWindow(overlayHwnd, false);
+    mainWindow.show();
+  });
 
   const rendererHtml = path.resolve(__dirname, "..", "renderer", "index.html");
   void mainWindow.loadFile(rendererHtml);
 
   mainWindow.webContents.once("did-finish-load", () => {
+    configureBorderlessOverlayWindow(overlayHwnd);
     pushUiState();
     if (isSmokeTest) {
       const snap = getActiveWindowSnapshot(getOwnPids());
@@ -491,6 +556,7 @@ function createOverlayWindow(): void {
   });
 
   mainWindow.on("closed", () => {
+    overlayHwnd = 0;
     mainWindow = null;
   });
 }
@@ -520,23 +586,18 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("session:surrender-phrase", () => {
     surrenderOpenedAt = Date.now();
-    surrenderModalOpen = true;
+    modalLockOpen = true;
     if (!currentSurrenderPhrase) {
       currentSurrenderPhrase = buildSurrenderPhrase(currentConfig?.goal ?? "lo studio");
     }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setIgnoreMouseEvents(false);
-      mainWindow.setFocusable(true);
-      mainWindow.focus();
-    }
+    applyOverlayInputState(true, true);
     return currentSurrenderPhrase;
   });
 
   ipcMain.handle("session:cancel-surrender", () => {
-    surrenderModalOpen = false;
-    if (mainWindow && !mainWindow.isDestroyed() && phase === "ACTIVE") {
-      mainWindow.setFocusable(false);
-      mainWindow.setIgnoreMouseEvents(true, { forward: true });
+    modalLockOpen = false;
+    if (phase === "ACTIVE") {
+      applyOverlayInputState(false, false);
     }
   });
 
@@ -544,10 +605,42 @@ function registerIpcHandlers(): void {
     const elapsed = Date.now() - surrenderOpenedAt;
     const result = validateSurrenderInput(currentSurrenderPhrase, typedPhrase, elapsed);
     if (result.valid) {
-      surrenderModalOpen = false;
+      modalLockOpen = false;
       finishSession(false);
     }
     return result;
+  });
+
+  ipcMain.handle("session:set-modal-lock", (_event, locked: boolean) => {
+    modalLockOpen = Boolean(locked);
+    if (modalLockOpen) {
+      applyOverlayInputState(true, true);
+    } else if (phase === "ACTIVE") {
+      applyOverlayInputState(false, false);
+    }
+  });
+
+  ipcMain.handle("session:complete-task", (_event, completionNote: string) => {
+    const cleanNote = completionNote.trim() || currentConfig?.goal || "Obiettivo completato";
+    modalLockOpen = false;
+    finishSession(true, cleanNote);
+  });
+
+  ipcMain.handle("monitor:force-check", async () => {
+    if (!monitor) {
+      return "Nessuna sessione attiva.";
+    }
+    const verdict = await monitor.forceImmediateCheck();
+    if (!verdict) {
+      return "Sto già controllando o sei sul desktop!";
+    }
+    if (verdict.verdict === "STUDYING") {
+      return "Controllato! Qui stai studiando bene, bravo!";
+    }
+    if (verdict.verdict === "NEUTRAL_SYSTEM") {
+      return "Finestra di sistema: apri i tuoi appunti o l'editor!";
+    }
+    return verdict.roastMessageIt || "Beccato a distrarti!";
   });
 
   ipcMain.handle("session:toggle-mute", (_event, muted: boolean) => {
@@ -567,11 +660,7 @@ function registerIpcHandlers(): void {
       usedFallback: badge.usedFallback
     };
     lastOverlayCommand = { mode: "IDLE_PERCH", workArea: getWorkAreaDip() };
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setIgnoreMouseEvents(false);
-      mainWindow.setFocusable(true);
-      mainWindow.focus();
-    }
+    applyOverlayInputState(true, true);
     pushUiState();
   });
 
@@ -582,19 +671,14 @@ function registerIpcHandlers(): void {
     if (
       phase === "LAUNCHER" ||
       phase === "REPORT" ||
-      surrenderModalOpen ||
+      modalLockOpen ||
       enforcer?.getPhase() === "NEGOTIATING"
     ) {
-      mainWindow.setIgnoreMouseEvents(false);
-      mainWindow.setFocusable(true);
+      applyOverlayInputState(true, true);
       return;
     }
 
-    mainWindow.setIgnoreMouseEvents(!interactive, { forward: true });
-    mainWindow.setFocusable(Boolean(focusable));
-    if (interactive && focusable) {
-      mainWindow.focus();
-    }
+    applyOverlayInputState(Boolean(interactive), Boolean(focusable));
   });
 }
 

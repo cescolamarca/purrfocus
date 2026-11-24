@@ -174,9 +174,10 @@ export async function evaluateActivityWithAi(options: {
     `Student goal: "${options.goal}".`,
     `Active foreground window: process="${options.windowSnapshot.processName}", title="${options.windowSnapshot.title}", isBrowser=${options.windowSnapshot.isBrowser}.`,
     `Temporary approved exceptions: ${exceptionsText}.`,
+    "Be STRICT: any webpage, video, chat, shopping site, news, social feed, or desktop app NOT clearly serving the stated goal MUST be marked DISTRACTED.",
     "Analyze the active window and screenshot carefully (including any split-screen half showing games, social media, anime, unrelated YouTube videos, chats, or shopping).",
-    "Do NOT mark legitimate study tools as distracted (IDE, terminals, PDFs, slides, docs, technical search, or educational videos relevant to the goal).",
-    "Return ONLY valid JSON with keys: verdict (STUDYING|DISTRACTED|NEUTRAL_SYSTEM), confidence (0..1), distractionTarget (BROWSER_TAB|DESKTOP_APP|SPLIT_SCREEN|NONE), roastMessageIt (witty sarcastic Italian 1-2 sentence scolding if DISTRACTED, else empty string), cacheSeconds (15..60).",
+    "Do NOT mark legitimate study tools as distracted when they serve the goal (IDE, terminals, PDFs, slides, docs, technical search, or educational videos relevant to the goal).",
+    "Return ONLY valid JSON with keys: verdict (STUDYING|DISTRACTED|NEUTRAL_SYSTEM), confidence (0..1), distractionTarget (BROWSER_TAB|DESKTOP_APP|SPLIT_SCREEN|NONE), roastMessageIt (witty sarcastic Italian 1-2 sentence scolding if DISTRACTED, else empty string), cacheSeconds (12..45).",
     "If the foreground window is a browser tab showing distraction, set distractionTarget='BROWSER_TAB'. If a split-screen half shows distraction, set distractionTarget='SPLIT_SCREEN'. If a standalone non-browser app is distracting, set distractionTarget='DESKTOP_APP'."
   ].join("\n");
 

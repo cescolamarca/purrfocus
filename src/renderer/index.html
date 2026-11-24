@@ -120,8 +120,44 @@
           <span id="hud-status-text">Studio OK</span>
         </div>
         <div class="hud-buttons">
+          <button type="button" id="btn-hud-complete" class="default">Completata</button>
           <button type="button" id="btn-hud-mute">Audio: ON</button>
-          <button type="button" id="btn-hud-surrender">Bandiera Bianca</button>
+          <button type="button" id="btn-hud-surrender">Arrenditi</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cat Interactive Speech Bubble -->
+    <div id="cat-speech-bubble" class="clippy-balloon cat-mini-bubble interactive-ui hidden">
+      <p id="cat-speech-text" class="balloon-message" style="margin: 0"></p>
+      <div class="balloon-tail"></div>
+    </div>
+
+    <!-- Cat Right-Click Context Menu -->
+    <div id="cat-context-menu" class="window cat-context-menu interactive-ui hidden">
+      <div class="cat-menu-list">
+        <button type="button" id="menu-complete-task">Segna attivita completata</button>
+        <button type="button" id="menu-force-check">Controllami subito</button>
+        <button type="button" id="menu-give-treat">Lancia croccantino</button>
+        <button type="button" id="menu-surrender">Bandiera Bianca</button>
+      </div>
+    </div>
+
+    <!-- Desktop Goose Style Shame Note -->
+    <div id="shame-note-window" class="window win98-shame interactive-ui hidden">
+      <div class="title-bar">
+        <div class="title-bar-text">Blocco Note — VERBALE_FELINO.TXT</div>
+        <div class="title-bar-controls">
+          <button type="button" aria-label="Close" id="btn-shame-close"></button>
+        </div>
+      </div>
+      <div class="window-body">
+        <div class="sunken-panel shame-note-body">
+          <div id="shame-note-text"></div>
+          <div id="shame-note-target" class="shame-target"></div>
+        </div>
+        <div class="dialog-actions">
+          <button type="button" id="btn-shame-ack" class="default">Ho capito, torno a studiare</button>
         </div>
       </div>
     </div>
@@ -194,6 +230,36 @@
           <div class="dialog-actions">
             <button type="button" id="btn-surrender-confirm" class="default">Conferma Resa</button>
             <button type="button" id="btn-surrender-back">Torna a Studiare</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Task Completion Modal -->
+    <div id="complete-backdrop" class="modal-backdrop hidden">
+      <div class="window win98-dialog interactive-ui">
+        <div class="title-bar">
+          <div class="title-bar-text">Missione Compiuta — PurrFocus 98</div>
+          <div class="title-bar-controls">
+            <button type="button" aria-label="Close" id="btn-complete-close"></button>
+          </div>
+        </div>
+        <div class="window-body">
+          <p class="dialog-subtitle">
+            Obiettivo: <strong id="complete-goal-label"></strong> (<span id="complete-elapsed-label"></span>)
+          </p>
+          <div class="field-row-stacked">
+            <label for="complete-note-input">Cosa hai portato a termine?</label>
+            <input
+              id="complete-note-input"
+              type="text"
+              placeholder="es. Completati tutti gli esercizi e riviste le slide"
+            />
+          </div>
+          <p id="complete-error" class="error-text hidden"></p>
+          <div class="dialog-actions">
+            <button type="button" id="btn-complete-confirm" class="default">Segna Completata!</button>
+            <button type="button" id="btn-complete-cancel">Continua a studiare</button>
           </div>
         </div>
       </div>

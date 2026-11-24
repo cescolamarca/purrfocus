@@ -4,6 +4,15 @@ import type { AiVerdict, WindowSnapshot } from "../src/shared/types";
 vi.mock("electron", () => ({
   desktopCapturer: {
     getSources: vi.fn(async () => [])
+  },
+  nativeImage: {
+    createFromBitmap: vi.fn()
+  },
+  screen: {
+    getPrimaryDisplay: vi.fn(() => ({
+      bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      scaleFactor: 1
+    }))
   }
 }));
 
@@ -46,7 +55,11 @@ describe("hybridMonitor decision logic", () => {
     expect(decision.action).toBe("IGNORE");
   });
 
-  it("debounces new contexts before triggering screenshot capture", () => {
+  it("uses crisp timings and debounces new contexts before triggering screenshot capture", () => {
+    expect(DEFAULT_MONITOR_TIMINGS.debounceMs).toBe(650);
+    expect(DEFAULT_MONITOR_TIMINGS.ambiguousTtlMs).toBe(12_000);
+    expect(DEFAULT_MONITOR_TIMINGS.auditIntervalMs).toBe(25_000);
+
     const win = makeWin("chrome.exe", "YouTube - Funny Cats", true);
     const key = normalizeWindowKey(win.processName, win.title);
 
@@ -57,7 +70,7 @@ describe("hybridMonitor decision logic", () => {
       makeState({ pendingKey: key, pendingSinceMs: 105_000 }),
       win,
       "Chrome_WidgetWin_1",
-      105_800
+      105_400
     );
     expect(waiting.action).toBe("WAIT_DEBOUNCE");
 
@@ -65,7 +78,7 @@ describe("hybridMonitor decision logic", () => {
       makeState({ pendingKey: key, pendingSinceMs: 105_000 }),
       win,
       "Chrome_WidgetWin_1",
-      106_500
+      105_800
     );
     expect(ready.action).toBe("CAPTURE_AND_JUDGE");
   });

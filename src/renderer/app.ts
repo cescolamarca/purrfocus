@@ -19,10 +19,14 @@ declare global {
       requestSurrenderPhrase: () => Promise<string>;
       cancelSurrenderModal: () => Promise<void>;
       attemptSurrender: (typedPhrase: string) => Promise<{ valid: boolean; reason?: string }>;
+      setModalLock: (locked: boolean) => Promise<void>;
+      completeTask: (completionNote: string) => Promise<void>;
+      forceCheckNow: () => Promise<string>;
       toggleMute: (muted: boolean) => Promise<void>;
       resetToLauncher: () => Promise<void>;
       setOverlayInteractive: (interactive: boolean, focusable?: boolean) => void;
       onStateUpdate: (callback: (state: RendererUiState) => void) => () => void;
+      onOpenCompleteRequested: (callback: () => void) => () => void;
     };
   }
 }
@@ -55,8 +59,24 @@ const hudTimerEl = document.getElementById("hud-timer")!;
 const hudGoalEl = document.getElementById("hud-goal")!;
 const hudLedEl = document.getElementById("hud-led")!;
 const hudStatusTextEl = document.getElementById("hud-status-text")!;
+const btnHudComplete = document.getElementById("btn-hud-complete")!;
 const btnHudMute = document.getElementById("btn-hud-mute")!;
 const btnHudSurrender = document.getElementById("btn-hud-surrender")!;
+
+const catSpeechBubble = document.getElementById("cat-speech-bubble")!;
+const catSpeechText = document.getElementById("cat-speech-text")!;
+
+const catContextMenu = document.getElementById("cat-context-menu")!;
+const menuCompleteTask = document.getElementById("menu-complete-task")!;
+const menuForceCheck = document.getElementById("menu-force-check")!;
+const menuGiveTreat = document.getElementById("menu-give-treat")!;
+const menuSurrender = document.getElementById("menu-surrender")!;
+
+const shameNoteWindow = document.getElementById("shame-note-window")!;
+const shameNoteText = document.getElementById("shame-note-text")!;
+const shameNoteTarget = document.getElementById("shame-note-target")!;
+const btnShameClose = document.getElementById("btn-shame-close")!;
+const btnShameAck = document.getElementById("btn-shame-ack")!;
 
 const warningBalloon = document.getElementById("warning-balloon")!;
 const balloonCountdownText = document.getElementById("balloon-countdown-text")!;
@@ -81,6 +101,15 @@ const btnSurrenderClose = document.getElementById("btn-surrender-close")!;
 const btnSurrenderConfirm = document.getElementById("btn-surrender-confirm")!;
 const btnSurrenderBack = document.getElementById("btn-surrender-back")!;
 
+const completeBackdrop = document.getElementById("complete-backdrop")!;
+const completeGoalLabel = document.getElementById("complete-goal-label")!;
+const completeElapsedLabel = document.getElementById("complete-elapsed-label")!;
+const completeNoteInput = document.getElementById("complete-note-input") as HTMLInputElement;
+const completeError = document.getElementById("complete-error")!;
+const btnCompleteClose = document.getElementById("btn-complete-close")!;
+const btnCompleteConfirm = document.getElementById("btn-complete-confirm")!;
+const btnCompleteCancel = document.getElementById("btn-complete-cancel")!;
+
 const reportBackdrop = document.getElementById("report-backdrop")!;
 const reportStatsBox = document.getElementById("report-stats-box")!;
 const reportVerdict = document.getElementById("report-verdict")!;
@@ -91,10 +120,14 @@ const skinImages = new Map<string, HTMLImageElement>();
 let selectedSkinId = "calico-00";
 let lastUiState: RendererUiState | null = null;
 let warningStartedAt = 0;
-let warningTotalMs = 2500;
+let warningTotalMs = 1800;
 let lastMode = "";
 let lastInteractiveFlag: boolean | null = null;
 let surrenderOpen = false;
+let completeOpen = false;
+let dismissedShameId = 0;
+let localBubbleExpiresAt = 0;
+let lastServerBubbleExpiresAt = 0;
 let previewTick = 0;
 let hudCollapsed = false;
 
@@ -110,6 +143,16 @@ function formatClock(secondsTotal: number): string {
   const mins = Math.floor(s / 60);
   const secs = s % 60;
   return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+function showCatSpeechBubble(text: string, durationMs = 3000): void {
+  localBubbleExpiresAt = performance.now() + durationMs;
+  catSpeechText.textContent = text;
+  catSpeechBubble.classList.remove("hidden");
+}
+
+function hideContextMenu(): void {
+  catContextMenu.classList.add("hidden");
 }
 
 function selectSkin(id: string): void {
@@ -205,6 +248,8 @@ btnStartSession.addEventListener("click", async () => {
     return;
   }
   launcherError.classList.add("hidden");
+  dismissedShameId = 0;
+  localBubbleExpiresAt = 0;
   const muted = !audioCheckbox.checked;
   audio.setMuted(muted);
 
@@ -229,6 +274,54 @@ btnHudMute.addEventListener("click", async () => {
   await window.purrfocus.toggleMute(nextMuted);
 });
 
+async function openCompleteModal(): Promise<void> {
+  if (!lastUiState || lastUiState.phase !== "ACTIVE") {
+    return;
+  }
+  hideContextMenu();
+  completeOpen = true;
+  completeError.classList.add("hidden");
+  completeGoalLabel.textContent = lastUiState.config?.goal || "Obiettivo di studio";
+  completeElapsedLabel.textContent = `${(lastUiState.stats.elapsedSeconds / 60).toFixed(1)} min`;
+  completeNoteInput.value = "";
+  completeBackdrop.classList.remove("hidden");
+  await window.purrfocus.setModalLock(true);
+  completeNoteInput.focus();
+}
+
+async function closeCompleteModal(): Promise<void> {
+  completeOpen = false;
+  completeBackdrop.classList.add("hidden");
+  await window.purrfocus.setModalLock(false);
+}
+
+btnHudComplete.addEventListener("click", () => void openCompleteModal());
+btnCompleteClose.addEventListener("click", () => void closeCompleteModal());
+btnCompleteCancel.addEventListener("click", () => void closeCompleteModal());
+
+btnCompleteConfirm.addEventListener("click", async () => {
+  const note = completeNoteInput.value.trim();
+  if (note.length < 4) {
+    completeError.textContent = "Scrivi brevemente cosa hai completato (almeno 4 caratteri).";
+    completeError.classList.remove("hidden");
+    return;
+  }
+  completeOpen = false;
+  completeBackdrop.classList.add("hidden");
+  await window.purrfocus.completeTask(note);
+});
+
+completeNoteInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    void btnCompleteConfirm.click();
+  }
+});
+
+window.purrfocus.onOpenCompleteRequested(() => {
+  void openCompleteModal();
+});
+
 btnJustifyNow.addEventListener("click", async () => {
   audio.playCourtGavel();
   await window.purrfocus.openExcuseCourt();
@@ -251,7 +344,8 @@ btnCourtSurrender.addEventListener("click", async () => {
   await window.purrfocus.cancelNegotiation();
 });
 
-btnHudSurrender.addEventListener("click", async () => {
+async function openSurrenderModal(): Promise<void> {
+  hideContextMenu();
   surrenderOpen = true;
   surrenderInput.value = "";
   surrenderError.classList.add("hidden");
@@ -260,7 +354,9 @@ btnHudSurrender.addEventListener("click", async () => {
   surrenderBackdrop.classList.remove("hidden");
   window.purrfocus.setOverlayInteractive(true, true);
   surrenderInput.focus();
-});
+}
+
+btnHudSurrender.addEventListener("click", () => void openSurrenderModal());
 
 surrenderInput.addEventListener("paste", (e) => e.preventDefault());
 surrenderInput.addEventListener("drop", (e) => e.preventDefault());
@@ -285,13 +381,47 @@ btnSurrenderConfirm.addEventListener("click", async () => {
   surrenderBackdrop.classList.add("hidden");
 });
 
+btnShameAck.addEventListener("click", () => {
+  if (lastUiState?.shameNote) {
+    dismissedShameId = lastUiState.shameNote.id;
+  }
+  shameNoteWindow.classList.add("hidden");
+});
+btnShameClose.addEventListener("click", () => btnShameAck.click());
+
+menuCompleteTask.addEventListener("click", () => void openCompleteModal());
+menuSurrender.addEventListener("click", () => void openSurrenderModal());
+
+menuForceCheck.addEventListener("click", async () => {
+  hideContextMenu();
+  showCatSpeechBubble("Fammi controllare cosa stai combinando...", 2200);
+  const reply = await window.purrfocus.forceCheckNow();
+  showCatSpeechBubble(reply, 3600);
+});
+
+menuGiveTreat.addEventListener("click", () => {
+  hideContextMenu();
+  const elapsed = lastUiState?.stats.elapsedSeconds ?? 0;
+  const rages = lastUiState?.stats.rageCount ?? 0;
+  if (rages > 0 && elapsed < 30) {
+    physics.emitHissFeedback("NO!");
+    audio.playWarningHiss();
+    showCatSpeechBubble("Niente croccantini dopo le distrazioni! Prima lavora!", 3200);
+    return;
+  }
+  const pos = physics.getPosition();
+  const offset = pos.x > window.innerWidth * 0.5 ? -180 : 180;
+  physics.chaseTreat(pos.x + offset, pos.y + 42);
+  showCatSpeechBubble("Miao! Croccantino meritato!", 2600);
+});
+
 btnReportNew.addEventListener("click", async () => {
   reportBackdrop.classList.add("hidden");
   await window.purrfocus.resetToLauncher();
 });
 
 function updateInteractiveHitTest(clientX: number, clientY: number): void {
-  if (!lastUiState || lastUiState.phase !== "ACTIVE" || surrenderOpen) {
+  if (!lastUiState || lastUiState.phase !== "ACTIVE" || surrenderOpen || completeOpen) {
     return;
   }
   if (lastUiState.negotiation) {
@@ -315,8 +445,11 @@ window.addEventListener("mousemove", (e) => {
 });
 
 window.addEventListener("mousedown", (e) => {
-  if (e.button !== 0) return;
   const el = document.elementFromPoint(e.clientX, e.clientY);
+  if (!el || !el.closest("#cat-context-menu")) {
+    hideContextMenu();
+  }
+  if (e.button !== 0) return;
   if (el && el.closest(".interactive-ui")) {
     return;
   }
@@ -324,7 +457,32 @@ window.addEventListener("mousedown", (e) => {
 });
 
 window.addEventListener("mouseup", () => {
-  physics.handlePointerUp();
+  const outcome = physics.handlePointerUp();
+  if (outcome === "PETTED") {
+    const rages = lastUiState?.stats.rageCount ?? 0;
+    if (rages >= 2) {
+      showCatSpeechBubble("Fusa sospette... non provare a corrompermi, studia!", 2800);
+    } else {
+      showCatSpeechBubble("Purr... bravo umano! Tasto destro per opzioni.", 2800);
+    }
+  }
+});
+
+window.addEventListener("contextmenu", (e) => {
+  if (!lastUiState || lastUiState.phase !== "ACTIVE") {
+    return;
+  }
+  if (physics.isPointOverCat(e.clientX, e.clientY)) {
+    e.preventDefault();
+    const mw = 190;
+    const mh = 115;
+    const left = Math.max(8, Math.min(window.innerWidth - mw - 8, e.clientX));
+    const top = Math.max(8, Math.min(window.innerHeight - mh - 8, e.clientY));
+    catContextMenu.style.left = `${Math.round(left)}px`;
+    catContextMenu.style.top = `${Math.round(top)}px`;
+    catContextMenu.classList.remove("hidden");
+    window.purrfocus.setOverlayInteractive(true, false);
+  }
 });
 
 function applyUiState(state: RendererUiState): void {
@@ -340,6 +498,11 @@ function applyUiState(state: RendererUiState): void {
   launcherBackdrop.classList.toggle("hidden", state.phase !== "LAUNCHER");
   hudWindow.classList.toggle("hidden", state.phase !== "ACTIVE");
   reportBackdrop.classList.toggle("hidden", state.phase !== "REPORT");
+  if (state.phase !== "ACTIVE") {
+    hideContextMenu();
+    shameNoteWindow.classList.add("hidden");
+    catSpeechBubble.classList.add("hidden");
+  }
 
   if (state.phase === "ACTIVE" && state.config) {
     const remaining = Math.max(0, state.stats.targetSeconds - state.stats.elapsedSeconds);
@@ -364,7 +527,7 @@ function applyUiState(state: RendererUiState): void {
   if (mode !== lastMode) {
     if (mode === "WARNING_CROUCH") {
       warningStartedAt = performance.now();
-      warningTotalMs = state.overlayCommand.countdownMs || 2500;
+      warningTotalMs = state.overlayCommand.countdownMs || 1800;
       audio.playWarningHiss();
     } else if (mode === "POUNCE_STRIKE" || mode === "DRAGGING_WINDOW") {
       audio.playStrikeMeow();
@@ -374,9 +537,31 @@ function applyUiState(state: RendererUiState): void {
     lastMode = mode;
   }
 
+  if (
+    state.catSpeechBubble &&
+    state.catSpeechBubble.expiresAt !== lastServerBubbleExpiresAt &&
+    state.catSpeechBubble.expiresAt > Date.now()
+  ) {
+    lastServerBubbleExpiresAt = state.catSpeechBubble.expiresAt;
+    showCatSpeechBubble(
+      state.catSpeechBubble.text,
+      Math.max(1500, state.catSpeechBubble.expiresAt - Date.now())
+    );
+  }
+
+  const showShame =
+    state.phase === "ACTIVE" &&
+    Boolean(state.shameNote && state.shameNote.id !== dismissedShameId);
+  shameNoteWindow.classList.toggle("hidden", !showShame);
+  if (showShame && state.shameNote) {
+    shameNoteText.textContent = state.shameNote.messageIt;
+    shameNoteTarget.textContent = `Distrazione: ${state.shameNote.targetTitle}`;
+  }
+
   const showBalloon = state.phase === "ACTIVE" && mode === "WARNING_CROUCH" && !state.negotiation;
   warningBalloon.classList.toggle("hidden", !showBalloon);
   if (showBalloon) {
+    catSpeechBubble.classList.add("hidden");
     balloonMessage.textContent =
       state.overlayCommand.roastMessageIt || "Miao! Che cosa stai guardando?!";
   }
@@ -406,19 +591,28 @@ function applyUiState(state: RendererUiState): void {
 
   if (state.phase === "REPORT") {
     const minsStudied = (state.stats.elapsedSeconds / 60).toFixed(1);
-    const finishedFull = state.stats.elapsedSeconds >= state.stats.targetSeconds;
+    const finishedGoal =
+      Boolean(state.stats.completedEarly) || state.stats.elapsedSeconds >= state.stats.targetSeconds;
     const totalPunishments = state.stats.tabsClosed + state.stats.windowsDragged;
+
+    const noteHtml = state.stats.completionNote
+      ? `<div>Traguardo raggiunto:</div><strong>${state.stats.completionNote.replace(/</g, "&lt;")}</strong>`
+      : "";
 
     reportStatsBox.innerHTML = `
       <div>Tempo trascorso:</div><strong>${minsStudied} min</strong>
+      ${noteHtml}
       <div>Schede chiuse dal gatto (Ctrl+W):</div><strong>${state.stats.tabsClosed}</strong>
       <div>Finestre trascinate via:</div><strong>${state.stats.windowsDragged}</strong>
       <div>Scuse approvate / respinte:</div><strong>${state.stats.excusesAccepted} / ${state.stats.excusesRejected}</strong>
     `;
 
-    if (!finishedFull) {
+    if (!finishedGoal) {
       reportVerdict.textContent =
         "Voto Felino: RITIRATO CON DISONORE. La prossima volta finisci il timer!";
+    } else if (state.stats.completedEarly && totalPunishments === 0) {
+      reportVerdict.textContent =
+        "Voto Felino: MISSIONE COMPIUTA IN ANTICIPO (S+)! Efficienza da vero felino.";
     } else if (totalPunishments === 0) {
       reportVerdict.textContent =
         "Voto Felino: S+! Nemmeno una distrazione. Ti sei guadagnato le fusa ufficiali.";
@@ -434,6 +628,17 @@ function applyUiState(state: RendererUiState): void {
 
 window.purrfocus.onStateUpdate(applyUiState);
 
+function positionBubbleOverCat(el: HTMLElement, width: number): void {
+  const pos = physics.getPosition();
+  const bh = el.offsetHeight || 80;
+  const left = Math.max(12, Math.min(window.innerWidth - width - 12, pos.x - 30));
+  const flipBelow = pos.y - bh - 16 < 12;
+  const top = flipBelow ? pos.y + CAT_DRAW_SIZE + 14 : pos.y - bh - 16;
+  el.classList.toggle("flip-below", flipBelow);
+  el.style.left = `${Math.round(left)}px`;
+  el.style.top = `${Math.round(top)}px`;
+}
+
 let lastTickTime = performance.now();
 function animationLoop(now: number): void {
   const dt = now - lastTickTime;
@@ -443,20 +648,17 @@ function animationLoop(now: number): void {
   physics.render(ctx);
 
   if (!warningBalloon.classList.contains("hidden")) {
-    const pos = physics.getPosition();
-    const bw = 265;
-    const bh = warningBalloon.offsetHeight || 115;
-    const left = Math.max(12, Math.min(window.innerWidth - bw - 12, pos.x - 30));
-    const flipBelow = pos.y - bh - 16 < 12;
-    const top = flipBelow ? pos.y + CAT_DRAW_SIZE + 14 : pos.y - bh - 16;
-    warningBalloon.classList.toggle("flip-below", flipBelow);
-    warningBalloon.style.left = `${Math.round(left)}px`;
-    warningBalloon.style.top = `${Math.round(top)}px`;
-
+    positionBubbleOverCat(warningBalloon, 265);
     const elapsed = now - warningStartedAt;
     const pct = Math.max(0, Math.min(100, 100 - (elapsed / warningTotalMs) * 100));
     balloonProgressFill.style.width = `${pct.toFixed(1)}%`;
     balloonCountdownText.textContent = `${Math.max(0, (warningTotalMs - elapsed) / 1000).toFixed(1)}s`;
+  } else if (!catSpeechBubble.classList.contains("hidden")) {
+    if (now > localBubbleExpiresAt) {
+      catSpeechBubble.classList.add("hidden");
+    } else {
+      positionBubbleOverCat(catSpeechBubble, 225);
+    }
   }
 
   if (!launcherBackdrop.classList.contains("hidden")) {

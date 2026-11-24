@@ -47,35 +47,84 @@ const DISTRACTING_PROCESSES = new Set([
   "discord.exe",
   "whatsapp.exe",
   "telegram.exe",
-  "netflix.exe"
+  "netflix.exe",
+  "vlc.exe",
+  "mpv.exe",
+  "wmplayer.exe",
+  "battle.net.exe",
+  "upc.exe",
+  "eadesktop.exe"
 ]);
 
 const DISTRACTION_TITLE_KEYWORDS = [
   "instagram",
   "tiktok",
-  "twitch",
+  "facebook",
+  "threads",
+  "reddit",
+  "x.com",
+  "twitter",
+  "pinterest",
+  "9gag",
+  "tumblr",
+  "snapchat",
+  "discord",
+  "whatsapp",
+  "telegram",
   "netflix",
   "prime video",
+  "primevideo",
   "disney+",
-  "facebook",
-  "reddit",
-  "9gag",
-  "twitter",
-  "x.com",
+  "disneyplus",
+  "dazn",
+  "raiplay",
+  "mediaset",
+  "twitch",
+  "kick.com",
+  "crunchyroll",
+  "anime",
+  "cb01",
+  "altadefinizione",
+  "streaming",
+  "episodio",
+  "stagione",
   "shorts",
   "reels",
+  "trailer",
+  "highlights",
   "gameplay",
   "walkthrough",
   "stream",
-  "fantacalcio",
-  "gazzetta",
-  "calciomercato",
   "meme",
   "comic",
-  "netflix",
+  "amazon",
+  "ebay",
+  "zalando",
+  "shein",
+  "temu",
+  "aliexpress",
+  "vinted",
+  "subito",
+  "booking",
+  "gazzetta",
+  "corriere",
+  "repubblica",
+  "fanpage",
+  "ansa",
+  "fantacalcio",
+  "calciomercato",
+  "diretta",
+  "serie a",
+  "champions",
+  "poki",
+  "crazygames",
   "chess.com",
   "lichess",
-  "wordle"
+  "wordle",
+  "itch.io",
+  "geforce",
+  "spotify",
+  "soundcloud"
 ];
 
 const EDUCATIONAL_KEYWORDS = [
@@ -85,25 +134,101 @@ const EDUCATIONAL_KEYWORDS = [
   "corso",
   "lezione",
   "lecture",
-  "university",
-  "universita",
+  "universit",
+  "unisa",
   "spiegazione",
   "esercizio",
   "esercizi",
   "pdf",
+  ".pdf",
   "slides",
+  "slide",
   "appunti",
+  "dispensa",
+  "dispense",
+  "capitolo",
+  "teorema",
+  "riassunto",
+  "tesi",
   "wikipedia",
+  "treccani",
   "stackoverflow",
   "github",
+  "gitlab",
+  "localhost",
+  "127.0.0.1",
   "mdn",
   "arxiv",
   "scholar",
-  "cppreference",
+  "ieee",
+  "youmath",
+  "studenti",
+  "skuola",
+  "docsity",
+  "studocu",
+  "moodle",
+  "elearning",
+  "teams",
+  "classroom",
+  "overleaf",
+  "latex",
+  "colab",
+  "jupyter",
+  "chatgpt",
+  "claude",
+  "gemini",
+  "notebooklm",
+  "drive.google",
+  "docs.google",
+  "wordreference",
+  "deepl",
   "python",
   "java",
   "rust",
-  "typescript"
+  "typescript",
+  "cppreference"
+];
+
+const ACADEMIC_YOUTUBE_KEYWORDS = [
+  "lezione",
+  "lecture",
+  "corso",
+  "tutorial",
+  "spiegazione",
+  "esercizio",
+  "mit ",
+  "stanford",
+  "unisa",
+  "politecnico",
+  "algoritm",
+  "analisi",
+  "fisica",
+  "chimica",
+  "matematica",
+  "programmazione"
+];
+
+const TRANSIENT_BROWSER_TITLES = [
+  "nuova scheda",
+  "new tab",
+  "pagina iniziale",
+  "about:blank",
+  "google chrome",
+  "microsoft edge",
+  "mozilla firefox",
+  "brave",
+  "opera"
+];
+
+const EXPLORER_DISTRACTION_KEYWORDS = [
+  "download",
+  "giochi",
+  "games",
+  "video",
+  "film",
+  "immagini",
+  "pictures",
+  "musica"
 ];
 
 const STOPWORDS = new Set([
@@ -134,6 +259,16 @@ function extractGoalKeywords(goal: string): string[] {
     .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
 }
 
+function isTransientBlankBrowserTitle(titleLower: string): boolean {
+  const trimmed = titleLower.trim();
+  if (!trimmed) {
+    return true;
+  }
+  return TRANSIENT_BROWSER_TITLES.some(
+    (t) => trimmed === t || trimmed.startsWith(`${t} - `) || trimmed === `${t} - google chrome`
+  );
+}
+
 export function evaluateLocally(goal: string, win: WindowSnapshot): AiVerdict {
   const proc = win.processName.toLowerCase();
   const titleLower = win.title.toLowerCase();
@@ -146,10 +281,10 @@ export function evaluateLocally(goal: string, win: WindowSnapshot): AiVerdict {
     const appLabel = proc.replace(/\.exe$/, "");
     return {
       verdict: "DISTRACTED",
-      confidence: 0.92,
+      confidence: 0.94,
       distractionTarget: "DESKTOP_APP",
-      roastMessageIt: `Seriamente hai aperto ${appLabel} invece di occuparti di "${goal}"? Questa finestra sparisce subito!`,
-      cacheSeconds: 20
+      roastMessageIt: `Seriamente hai aperto ${appLabel} invece di occuparti di «${goal}»?! Questa finestra sparisce subito!`,
+      cacheSeconds: 15
     };
   }
 
@@ -159,55 +294,84 @@ export function evaluateLocally(goal: string, win: WindowSnapshot): AiVerdict {
       confidence: 0.88,
       distractionTarget: "NONE",
       roastMessageIt: "",
-      cacheSeconds: 60
+      cacheSeconds: 30
     };
   }
 
   if (win.isBrowser) {
+    if (isTransientBlankBrowserTitle(titleLower)) {
+      return {
+        verdict: "NEUTRAL_SYSTEM",
+        confidence: 0.7,
+        distractionTarget: "NONE",
+        roastMessageIt: "",
+        cacheSeconds: 5
+      };
+    }
+
     const matchedDistraction = DISTRACTION_TITLE_KEYWORDS.find((kw) => titleLower.includes(kw));
     if (matchedDistraction && !mentionsGoal) {
       return {
         verdict: "DISTRACTED",
-        confidence: 0.9,
+        confidence: 0.93,
         distractionTarget: "BROWSER_TAB",
-        roastMessageIt: `Beccato su "${matchedDistraction}"! Non mi sembra proprio materiale per "${goal}". Chiudo la scheda!`,
-        cacheSeconds: 15
+        roastMessageIt: `Beccato su "${matchedDistraction}"! Non mi sembra proprio materiale per «${goal}». Chiudo la scheda!`,
+        cacheSeconds: 12
       };
     }
 
     if (titleLower.includes("youtube")) {
-      const hasEduSignal = mentionsGoal || EDUCATIONAL_KEYWORDS.some((kw) => titleLower.includes(kw));
-      if (!hasEduSignal) {
+      const hasAcademicSignal =
+        mentionsGoal || ACADEMIC_YOUTUBE_KEYWORDS.some((kw) => titleLower.includes(kw));
+      if (!hasAcademicSignal) {
         return {
           verdict: "DISTRACTED",
-          confidence: 0.8,
+          confidence: 0.88,
           distractionTarget: "BROWSER_TAB",
-          roastMessageIt: `YouTube sospetto rilevato: "${win.title.slice(0, 48)}". Se è una lezione giustificati subito, altrimenti chiudo!`,
-          cacheSeconds: 15
+          roastMessageIt: `YouTube sospetto rilevato: «${win.title.slice(0, 46)}». Se è una lezione giustificati subito, altrimenti chiudo!`,
+          cacheSeconds: 12
         };
       }
+      return {
+        verdict: "STUDYING",
+        confidence: 0.78,
+        distractionTarget: "NONE",
+        roastMessageIt: "",
+        cacheSeconds: 20
+      };
+    }
+
+    const hasEduSignal = mentionsGoal || EDUCATIONAL_KEYWORDS.some((kw) => titleLower.includes(kw));
+    if (!hasEduSignal) {
+      return {
+        verdict: "DISTRACTED",
+        confidence: 0.84,
+        distractionTarget: "BROWSER_TAB",
+        roastMessageIt: `Che c'entra «${win.title.slice(0, 45)}» con «${goal}»?! Hai 1.8s per giustificarti o chiudo la scheda!`,
+        cacheSeconds: 12
+      };
     }
 
     return {
       verdict: "STUDYING",
-      confidence: 0.72,
+      confidence: 0.8,
       distractionTarget: "NONE",
       roastMessageIt: "",
       cacheSeconds: 25
     };
   }
 
-  if (mentionsGoal) {
-    return {
-      verdict: "STUDYING",
-      confidence: 0.8,
-      distractionTarget: "NONE",
-      roastMessageIt: "",
-      cacheSeconds: 45
-    };
-  }
-
   if (proc === "explorer.exe" || proc === "applicationframehost.exe") {
+    const explorerDistraction = EXPLORER_DISTRACTION_KEYWORDS.find((kw) => titleLower.includes(kw));
+    if (explorerDistraction && !mentionsGoal) {
+      return {
+        verdict: "DISTRACTED",
+        confidence: 0.84,
+        distractionTarget: "DESKTOP_APP",
+        roastMessageIt: `Che ci fai dentro "${win.title.slice(0, 40)}"?! Torna a lavorare su «${goal}»!`,
+        cacheSeconds: 12
+      };
+    }
     return {
       verdict: "NEUTRAL_SYSTEM",
       confidence: 0.75,
@@ -217,12 +381,22 @@ export function evaluateLocally(goal: string, win: WindowSnapshot): AiVerdict {
     };
   }
 
+  if (mentionsGoal) {
+    return {
+      verdict: "STUDYING",
+      confidence: 0.82,
+      distractionTarget: "NONE",
+      roastMessageIt: "",
+      cacheSeconds: 30
+    };
+  }
+
   return {
-    verdict: "STUDYING",
-    confidence: 0.65,
-    distractionTarget: "NONE",
-    roastMessageIt: "",
-    cacheSeconds: 20
+    verdict: "DISTRACTED",
+    confidence: 0.85,
+    distractionTarget: "DESKTOP_APP",
+    roastMessageIt: `Applicazione sospetta (${win.processName}): non sembra proprio «${goal}»! La porto via io!`,
+    cacheSeconds: 15
   };
 }
 
